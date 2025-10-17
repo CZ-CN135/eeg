@@ -376,17 +376,15 @@ namespace Collect.Plot
                             hp2_prevX[i] = yhp1;
                             hp2_prevY[i] = yhp2;
 
-                            double ylp1 = lpf1[i].Process(yhp2);
+
+
+                            // --- 50 Hz 双级陷波 ---
+                            double y1 = notch1[i].Process(yhp2);
+                            double y2 = notch2[i].Process(y1);
+
+                            // --- 新增：40 Hz 低通（两级，等效4阶） ---
+                            double ylp1 = lpf1[i].Process(y2);
                             double ylp2 = lpf2[i].Process(ylp1);
-
-
-                            //// --- 50 Hz 双级陷波 ---
-                            //double y1 = notch1[i].Process(yhp2);
-                            //double y2 = notch2[i].Process(y1);
-
-                            //// --- 新增：40 Hz 低通（两级，等效4阶） ---
-                            //double ylp1 = lpf1[i].Process(y2);
-                            //double ylp2 = lpf2[i].Process(ylp1);
 
                             // ---新增：5点中值去尖峰（实时） ---
                             double filterdata = Median5_Update(i, ylp2);
