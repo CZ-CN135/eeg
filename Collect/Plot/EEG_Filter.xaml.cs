@@ -368,7 +368,7 @@ namespace Collect.Plot
                             // --- 第1级 一阶高通：去基线漂移 ---
                             // y[n] = a * (y[n-1] + x[n] - x[n-1])
                             double yhp1 = hpA * (hp1_prevY[i] + x - hp1_prevX[i]);
-                            hp1_prevX[i] = x;//12
+                            hp1_prevX[i] = x;
                             hp1_prevY[i] = yhp1;
 
                             // --- 第2级 一阶高通：进一步增强滚降 ---
