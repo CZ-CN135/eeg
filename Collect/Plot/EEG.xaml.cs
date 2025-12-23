@@ -446,6 +446,7 @@ namespace Collect.Plot
         BiquadLPF[] lpf1 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ1)).ToArray();
         BiquadLPF[] lpf2 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ2)).ToArray();
         BiquadNotch[] notch1;
+        BiquadNotch[] notch2;
 
         void ResetFilterState(int chCount)
         {
@@ -464,7 +465,7 @@ namespace Collect.Plot
             }
 
             notch1 = Enumerable.Range(0, chCount).Select(_ => new BiquadNotch(sampleRate, notchF0, notchQ)).ToArray();
-
+            notch2 = Enumerable.Range(0, 8).Select(_ => new BiquadNotch(sampleRate, notchF0, notchQ)).ToArray();
         }
         double Median5_Update(int ch, double x)
         {
@@ -510,13 +511,12 @@ namespace Collect.Plot
             {
                 double temp = (Convert.ToDouble(eeg_data_float[i]));
 
-
                 // ① 前置：5点中值去尖峰（防振铃）
                 double med = Median5_Update(i, temp);
-                double x = (Math.Abs(temp - med) > 800) ? med : temp;
+                //double x = (Math.Abs(temp - med) > 800) ? med : temp;
                 // --- 第1级 一阶高通：去基线漂移 ---
-                double yhp1 = hpA * (hp1_prevY[i] + x - hp1_prevX[i]);
-                hp1_prevX[i] = x;
+                double yhp1 = hpA * (hp1_prevY[i] + med - hp1_prevX[i]);
+                hp1_prevX[i] = med;
                 hp1_prevY[i] = yhp1;
 
                 // --- 第2级 一阶高通：进一步增强滚降 ---
@@ -526,7 +526,7 @@ namespace Collect.Plot
 
                 // --- 50 Hz 双级陷波1级 ---
                 double y1 = notch1[i].Process(yhp2);
-                //double y2 = notch2[i].Process(y1);
+                double y2 = notch2[i].Process(y1);
 
 
                 //---新增：40 Hz 低通（两级，等效4阶） ---
