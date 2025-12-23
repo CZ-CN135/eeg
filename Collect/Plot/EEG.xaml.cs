@@ -530,7 +530,7 @@ namespace Collect.Plot
 
 
                 //---新增：40 Hz 低通（两级，等效4阶） ---
-                double ylp1 = lpf1[i].Process(y1);
+                double ylp1 = lpf1[i].Process(y2);
                 double ylp2 = lpf2[i].Process(ylp1);
 
 
