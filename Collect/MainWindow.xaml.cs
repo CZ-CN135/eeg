@@ -1,5 +1,6 @@
 ﻿using Accord.Math;
 using Collect.Helper;
+using Collect.Plot;
 using NLog;
 using NLog.Config;
 using System;
@@ -147,12 +148,24 @@ namespace Collect
             PGAbox.Text = "24";
             PGAbox.FontSize = 15;
             stackpanel1.Children.Add(PGAbox);
+
+            stackpanel1.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "滤波采样率"
+            });
+            fcbox= new System.Windows.Controls.TextBox();
+            fcbox.Text = "1000";
+            fcbox.FontSize = 15;
+            stackpanel1.Children.Add(fcbox);
+
             stackpanel1.Children.Add(btn_tcp);
             stackpanel1.Children.Add(btn_save);
             stackpanel1.Children.Add(btn_save_filter_excel);
             stackpanel1.Children.Add(btn_save_filter_ns2);
             stackpanel1.Children.Add(btn_save_filter);
             stackpanel1.Children.Add(btn_clear);
+
 
             //com
             btn_save_com = new System.Windows.Controls.Button();
@@ -381,6 +394,7 @@ namespace Collect
 
         private TextBox Iptextbox;
         private TextBox PGAbox;
+        private TextBox fcbox;
         private System.Windows.Controls.TextBox Porttextbox;
         private ComboBox comboBox;
         private ComboBox comboBox1;
@@ -672,6 +686,7 @@ namespace Collect
             var content = button.Content.ToString();
             bool sucess = eeg.TCP_Install_ecg(content, Iptextbox.Text, int.Parse(Porttextbox.Text));
             eeg.PGA = Convert.ToInt16(PGAbox.Text);
+            eeg.set_filter_params(Convert.ToDouble(fcbox.Text));
             if (sucess)
             {
                 eeg.client.IsWri_start = true;

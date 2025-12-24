@@ -86,7 +86,7 @@ namespace Collect.Plot
         double[][] buffer_in = new double[CN][];
         double[][] buffer_out = new double[CN][];
 
-
+       
         short g_ecg_data = 0;
         int g_old_ecg_time = 0;
         double g_scale = 1;
@@ -100,6 +100,7 @@ namespace Collect.Plot
         UdpClient udpdata = new UdpClient();
         public EEG()
         {
+          
             //8行5列数组,CN=8,DN=5
             for (int i = 0; i < CN; i++)
             {
@@ -355,7 +356,7 @@ namespace Collect.Plot
             }
            
         }
-        double fs = 1000; // 采样率Hz，根据实际情况修改
+        public double fs; // 采样率Hz，根据实际情况修改
 
         int buffer_save_index = 0;
         //short[][] eeg_data_buffer = new short[8][];
@@ -414,24 +415,27 @@ namespace Collect.Plot
        
         int index= 0;
 
+
+
+        
         /// <summary>
         /// 修改滤波顺序
         /// </summary>
         /// <param name="ch"></param>
         /// <param name="x"></param>
         /// <returns></returns>
-        static double sampleRate = 1000;
+        public  double sampleRate;
 
-        static double hpCut = 0.5;   // 高通截止 0.5 Hz
-        static double hpA = Math.Exp(-2.0 * Math.PI * hpCut / sampleRate);
+        public double hpCut = 0.5;   // 高通截止 0.5 Hz
+        public  double hpA;
 
-        static double lpCut = 40.0;  // 低通截止 40 Hz
+        public double lpCut = 40.0;  // 低通截止 40 Hz
         // 4阶 Butterworth 两段二阶的 Q（固定值）
-        static double lpQ1 = 0.5411961;
-        static double lpQ2 = 1.3065630;
+        public double lpQ1 = 0.5411961;
+        public double lpQ2 = 1.3065630;
 
-        static double notchF0 = 50.0;
-        static double notchQ = 25.0;  // 约等于 BW=2Hz 的量级（可按需要微调）
+        public double notchF0 = 50.0;
+        public double notchQ = 25.0;  // 约等于 BW=2Hz 的量级（可按需要微调）
 
         // ===== 状态（8通道）=====
         double[] hp1_prevX = new double[8];
@@ -443,10 +447,17 @@ namespace Collect.Plot
         int[] medCount = new int[8];
         int[] medIdx = new int[8];
 
-        BiquadLPF[] lpf1 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ1)).ToArray();
-        BiquadLPF[] lpf2 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ2)).ToArray();
+        BiquadLPF[] lpf1;
+        BiquadLPF[] lpf2 ;
         BiquadNotch[] notch1;
         BiquadNotch[] notch2;
+        public void set_filter_params(double fs)
+        {
+            sampleRate = fs;
+            hpA = Math.Exp(-2.0 * Math.PI * hpCut / sampleRate);
+            lpf1 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ1)).ToArray();
+            lpf2 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ2)).ToArray();
+        }
 
         void ResetFilterState(int chCount)
         {
