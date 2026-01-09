@@ -73,13 +73,15 @@ namespace Collect.Plot
         public EEG _eeg;
         public double[] firCoefficients;
         public FIRFilter filter;
-
+        public double LLMin = 0;
+        public double LLMax = 1;
+        public double RMSMin = 0;
+        public double RMSMax = 10;
+        public double Alpha = 0.2;
         public EEG_Filter(EEG eeg)
         {
             _eeg=eeg;
             InitializeComponent();
-           
-
             ch.Items.Add(new ComboBoxItem
             {
                 Content = "1"
@@ -169,7 +171,7 @@ namespace Collect.Plot
             channel_6.IsChecked = true;
             channel_7.IsChecked = true;
             channel_8.IsChecked = true;
-            _eeg.Ecg_FilterEvent += Ecg_FilterEvent;
+            
         }
         public float[] eeg_data_float= new float[8];
         public double[] eeg_data = new double[8];
@@ -186,7 +188,7 @@ namespace Collect.Plot
         /// <param name="sender"></param>
         /// <param name="e"></param>
         //采样率
-        static double sampleRate = 500;
+        static double sampleRate = 1000;
 
         static double hpCut = 0.5;   // 高通截止 0.5 Hz
         static double hpA = Math.Exp(-2.0 * Math.PI * hpCut / sampleRate);
@@ -213,7 +215,7 @@ namespace Collect.Plot
         BiquadLPF[] lpf2= Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ2)).ToArray();
         BiquadNotch[] notch1;
 
-
+       
         double g_index_1 = 0;
         // ===== 每次处理前都重置（关键！）=====
         void ResetFilterState(int chCount)
@@ -236,6 +238,80 @@ namespace Collect.Plot
 
             g_index_1 = 0;
         }
+        /// <summary>
+        /// 离线癫痫
+        /// </summary>
+        /// <param name="Freqtextbox_filter"></param>
+        /// <returns></returns>
+        private SeizureDetector _detector;
+        private BandPowerRatioDetector _stage2;
+        public void InitAfterFsKnown(double fs)
+        {
+            // Stage1
+            _detector = new SeizureDetector(new SeizureDetector.Config
+            {
+                Fs = sampleRate,
+                ChannelCount = 8, //通道数
+                WindowMs = 200, //第一检测区窗口大小
+                StepMs = 50,//第一检测区步数
+                WarmupMs = 1000,//前1s热身
+                LlMin = LLMin,//LL最小值
+                LlMax = LLMax,//LL最大值
+                RmsMin = RMSMin,//RMS最小值
+                RmsMax = RMSMax,//RMS最大值
+                //RmsThreshold = 80,//RMS阈值
+                //LlThreshold = 2000,//LL阈值
+                MinChannelsToTrigger = 1,//最小触发通道数
+                StopAfterTrigger = false,//触发后是否停止检测
+
+                Stage2LookbackMs = 400, // 向前 400ms
+                Stage2WindowMs = 600,   // 总窗口 600ms
+                HistoryMs = 2000,       // 历史缓冲 2s
+                Stage2EmitMinIntervalMs = 100// 最小间隔 100ms
+            });
+            _detector.Start();
+
+            // Stage2
+            _stage2 = new BandPowerRatioDetector(new BandPowerRatioDetector.Config
+            {
+                Fs = sampleRate,
+                ChannelCount = 8,
+
+                AlphaRelativeThreshold=Alpha,//带功率比阈值
+                MinChannelsToTrigger = 2
+            });
+            _stage2.Start();
+            int index = 1;
+            _detector.OnWindowEvaluated += (s, e) =>
+            {
+
+                //NlogHelper.WriteInfoLog($"Stage1 评估窗口：{e.WindowStartSample} - {e.WindowEndSample},通道{1},RMS={e.RmsPerChannel[0]},LL={e.LlPerChannel[0]},计算次数={index}");
+                NlogHelper.WriteInfoLog(e.RmsPerChannel[7].ToString());
+                NlogHelper.WriteInfoLog(LLMin.ToString()+','+LLMax.ToString()+ ',' + RMSMin.ToString()+ ',' + RMSMax.ToString());
+                //NlogHelper.WriteInfoLog(e.LlPerChannel[7].ToString());
+
+
+            };
+            // 关键：Stage1 命中后，把 600ms 数据块送入 Stage2 队列（Stage2 自己线程算）
+            _detector.OnStage2WindowReady += (s, e) =>
+            {
+                _stage2.PushWindow(e.Window, e.WindowStartSample, e.WindowEndSample);
+                //NlogHelper.WriteInfoLog($"Stage1 触发，送入 Stage2 窗口：{e.WindowStartSample} - {e.WindowEndSample}");
+            };
+            _stage2.OnStage2Evaluated += (s, e) =>
+            {
+                //NlogHelper.WriteInfoLog($"送入 Stage2 窗口：{e.WindowStartSample} - {e.WindowEndSample},通道1，带功率比={e.RatioPerChannel[0]}");
+            };
+            // Stage2 触发事件（注意：这是在 Stage2 线程里触发，UI要Dispatcher）
+            _stage2.OnStage2Triggered += (s, e) =>
+            {
+                NlogHelper.WriteInfoLog($"Stage2 触发！有癫痫 窗口：{e.WindowStartSample} - {e.WindowEndSample}，满足通道数：{e.PassedChannels}");
+                // 这里做“最终确认触发”
+                // 如要更新UI，请 Dispatcher.BeginInvoke(...)
+            };
+
+        }
+        private bool _detectorInited = false;
         public  double[][] LoadExcelAs2DArray(string Freqtextbox_filter)
         {
             // ① 打开文件选择框
@@ -278,7 +354,26 @@ namespace Collect.Plot
                 }
             }
             double[][] eeg_data_buffer = new double[colCount][];
-
+            if (!_detectorInited)
+            {
+                double fs = sampleRate; // 或从数据包/设备配置解析
+                InitAfterFsKnown(fs);
+                _detectorInited = true;
+            }
+            for (int i=0; i < rowCount; i++)
+            {
+                for(int j=0; j < colCount; j++)
+                {
+                    eeg_data_float[j] = (float)(data[j, i]);
+                }
+                if (_detector != null)
+                {
+                    double[] frame = new double[8];
+                    for (int ch = 0; ch < 8; ch++)
+                        frame[ch] = eeg_data_float[ch];   // 或者用你滤波后的 filterdata（更稳）
+                    _detector.PushFrame(frame);
+                }
+            }
             for (int i = 0; i < colCount; i++)
             {
                 eeg_data_buffer[i] = new double[rowCount];
@@ -377,271 +472,6 @@ namespace Collect.Plot
         }
 
 
-        private void Ecg_FilterEvent(object sender, EcgFilterEventArgs e)
-        {
-            //EEG_Length_COUNT++;
-            //if (IsFilter)
-            //{
-               
-            //    if (clear_original_filter_txt_flag)
-            //    {
-            //        // 清空 Original_data.txt 文件内容
-            //        //File.WriteAllText(originalDataFile, string.Empty);
-            //        //File.WriteAllText(filterDataFile, string.Empty);
-            //        //File.WriteAllText(originalDataNs2File, string.Empty);
-            //        //File.WriteAllText(filterDataNs2File, string.Empty);
-            //        clear_original_filter_txt_flag = false;
-            //        IsFilter=false;
-            //        //如需复位滤波器状态可在此重新new
-            //        for (int k = 0; k < 8; k++)
-            //        {
-            //            notch1[k] = new BiquadNotch(sampleRate, f0, Q);
-            //            notch2[k] = new BiquadNotch(sampleRate, f0, Q);
-            //            // 新增：重置高通状态
-            //            hp1_prevX[k] = hp1_prevY[k] = 0.0;
-            //            hp2_prevX[k] = hp2_prevY[k] = 0.0;
-            //            lpf1[k] = new BiquadLPF(sampleRate, lpCut, lpQ);
-            //            lpf2[k] = new BiquadLPF(sampleRate, lpCut, lpQ);
-            //            Array.Clear(medBuf[k], 0, medBuf[k].Length);
-            //            medCount[k] = 0;
-            //            medIdx[k] = 0;
-            //        }
-            //    }
-               
-            //    // 创建滤波器并处理该通道数据
-            //    //var onlineFirFilter = OnlineFirFilter.CreateBandpass(ImpulseResponse.Finite, 1000, 0.3, 40, 1024);
-            //    Buffer.BlockCopy(e.eeg_data, 0, eeg_data_float, 0, 8);
-            //    //for(int i = 0; i < eeg_data_float.Length; i++)
-            //    //{
-            //    //    eeg_data[i] =Convert.ToDouble( eeg_data_float[i]);
-            //    //}
-              
-            //    //if (long_filter_flag)
-            //    //{
-            //    //    EEG_FILTER_DATA.Add(eeg_data);
-            //    //    //开始处理
-            //    //    if (EEG_Length_COUNT >= EEG_Length)
-            //    //    {
-            //    //        // 对每个通道进行滤波处理
-            //    //        for (int i = 0; i < 8; i++)
-            //    //        {
-            //    //            // 提取所有数组的索引[i]为一个新数组
-            //    //            double[] channelData = new double[EEG_FILTER_DATA.Count];
-            //    //            for (int j = 0; j < EEG_FILTER_DATA.Count; j++)
-            //    //            {
-            //    //                channelData[j] = Convert.ToDouble(EEG_FILTER_DATA[j][i]);
-            //    //            }
-            //    //            double[] filteredChannelData = onlineFirFilter.ProcessSamples(channelData);
-            //    //            for (int j = 0; j < filteredChannelData.Length; j++)
-            //    //            {
-            //    //                lineData[i].Append(g_index, filteredChannelData[j]);
-            //    //            }
-            //    //            g_index += 0.002;
-
-            //    //            //当前数据点与上次更新的数据差大于4x500个数据点或者当前数据少于WindowSizex500
-            //    //            if (Convert.ToInt32(g_index) - g_old_ecg_time > 4 || Convert.ToInt32(g_index) < WindowSize)
-            //    //            {
-            //    //                g_old_ecg_time = Convert.ToInt32(g_index);
-
-            //    //                if (Convert.ToInt32(g_index) < WindowSize)
-            //    //                {
-            //    //                    g_old_ecg_time = Convert.ToInt32(WindowSize - 5);
-            //    //                }
-            //    //                this.Dispatcher.BeginInvoke((Action)delegate ()
-            //    //                {
-            //    //                    sciChartSurface.XAxis.VisibleRange = ComputeXAxisRange(g_old_ecg_time);
-            //    //                });
-            //    //            }
-            //    //            EEG_Length_COUNT = 0;
-            //    //            // 现在filteredChannelData包含了该通道所有时间点的滤波后数据
-            //    //            // 您可以在这里使用滤波后的数据进行后续处理
-            //    //        }
-            //    //    }
-
-            //    //}
-            //    if (single_filter_flag)
-            //    {
-            //        if (EEG_Length_COUNT >= 500)
-            //        {
-
-            //            for (int i = 0; i < 8; i++)
-            //            {
-            //                //double filterdata = onlineFirFilter.ProcessSample(Convert.ToDouble(eeg_data_float[i]));
-            //                //double filterdata = notchFilter.ProcessSample(Convert.ToDouble(eeg_data_float[i]));
-            //                //double x = Convert.ToDouble(eeg_data_float[i]);
-
-            //                //// 可选：去掉直流均值，减少边缘效应（强烈建议）
-            //                //const double hpTauSec = 2.0;               // 2s 的慢均值（可调）
-            //                //double[] dcMean = new double[8];    // 放到类里
-            //                //double alpha = 1.0 / (sampleRate * hpTauSec);
-            //                //dcMean[i] += (x - dcMean[i]) * alpha;
-            //                //double xAC = x - dcMean[i];
-
-            //                //// 串两级 notch 提升抑制深度
-            //                //double y = notch2.Process(notch1.Process(xAC));
-
-            //                //// 如需保持原有直流水平，可加回去（画原始计数值时更直观）
-            //                //double filterdata = y + dcMean[i];
-
-            //                double x = eeg_data_float[i];
-
-
-            //                // --- 第1级 一阶高通：去基线漂移 ---
-            //                // y[n] = a * (y[n-1] + x[n] - x[n-1])
-            //                double yhp1 = hpA * (hp1_prevY[i] + x - hp1_prevX[i]);
-            //                hp1_prevX[i] = x;
-            //                hp1_prevY[i] = yhp1;
-
-            //                // --- 第2级 一阶高通：进一步增强滚降 ---
-            //                double yhp2 = hpA * (hp2_prevY[i] + yhp1 - hp2_prevX[i]);
-            //                hp2_prevX[i] = yhp1;
-            //                hp2_prevY[i] = yhp2;
-
-                       
-            //                // --- 50 Hz 双级陷波 ---
-            //                double y1 = notch1[i].Process(yhp2);
-            //                double y2 = notch2[i].Process(y1);
-
-
-            //                //---新增：40 Hz 低通（两级，等效4阶） ---
-            //               double ylp1 = lpf1[i].Process(y2);
-            //                double ylp2 = lpf2[i].Process(ylp1);
-            //                double ylp3 = lpf3[i].Process(ylp2);
-
-
-
-            //                //---新增：5点中值去尖峰（实时） ---
-            //                double filterdata = Median5_Update(i, ylp3);
-
-            //                lineData[i].Append(g_index, filterdata);
-            //                if (i == 0)
-            //                {
-            //                    //File.AppendAllText(originalDataFile, x.ToString("G17") + " ");
-            //                    //File.AppendAllText(filterDataFile, filterdata.ToString("G17") + " ");
-            //                    File.AppendAllText(originalDataNs2File, x.ToString("G17") + " ");
-            //                    File.AppendAllText(filterDataNs2File, filterdata.ToString("G17") + " ");
-            //                }
-            //                save_data_buffer[buffer_save_index][i] = filterdata;
-            //            }
-            //            g_index += 0.002;
-            //            buffer_save_index++;
-            //            buffer_save_index %= 500;
-            //            if (buffer_save_index == 499)
-            //            {
-            //                // 创建一个新的数据快照（值拷贝）
-            //                var copiedBuffer = new double[500][];
-            //                for (int i = 0; i < 500; i++)
-            //                {
-            //                    copiedBuffer[i] = new double[8];
-            //                    Array.Copy(save_data_buffer[i], copiedBuffer[i], 8);
-            //                }
-
-            //                save_data_buffer_all.Add(copiedBuffer);
-
-            //                // 原始 buffer 重置
-            //                save_data_buffer = new double[500][];
-            //                for (int i = 0; i < 500; i++) save_data_buffer[i] = new double[8];
-            //                buffer_save_index = 0;
-            //                //save_data_buffer_all.Add(save_data_buffer);
-            //            }
-
-            //            //当前数据点与上次更新的数据差大于4x500个数据点或者当前数据少于WindowSizex500
-            //            if (Convert.ToInt32(g_index) - g_old_ecg_time > 4 || Convert.ToInt32(g_index) < WindowSize)
-            //            {
-            //                g_old_ecg_time = Convert.ToInt32(g_index);
-
-            //                if (Convert.ToInt32(g_index) < WindowSize)
-            //                {
-            //                    g_old_ecg_time = Convert.ToInt32(WindowSize - 5);
-            //                }
-            //                this.Dispatcher.BeginInvoke((Action)delegate ()
-            //                {
-            //                    sciChartSurface.XAxis.VisibleRange = ComputeXAxisRange(g_old_ecg_time);
-            //                });
-            //            }
-            //        }
-            //        //if (EEG_Length_COUNT >= 500)
-            //        //{
-
-            //        //    for (int i = 0; i < 8; i++)
-            //        //    {
-            //        //        double x = eeg_data_float[i];
-            //        //        // --- 第1级 一阶高通：去基线漂移 ---
-            //        //        // y[n] = a * (y[n-1] + x[n] - x[n-1])
-            //        //        double yhp1 = hpA * (hp1_prevY[i] + x - hp1_prevX[i]);
-            //        //        hp1_prevX[i] = x;
-            //        //        hp1_prevY[i] = yhp1;
-
-            //        //        // --- 第2级 一阶高通：进一步增强滚降 ---
-            //        //        double yhp2 = hpA * (hp2_prevY[i] + yhp1 - hp2_prevX[i]);
-            //        //        hp2_prevX[i] = yhp1;
-            //        //        hp2_prevY[i] = yhp2;
-
-            //        //        //double yhp2_2 = Median5_Update(i, yhp2);
-
-            //        //        //double ylp1 = lpf1[i].Process(yhp2);
-            //        //        //double ylp2 = lpf2[i].Process(ylp1);
-
-            //        //        //double y1 = notch1[i].Process(ylp2);
-            //        //        //double y2 = notch2[i].Process(y1);
-
-            //        //        //double filterdata = Median5_Update(i, y2);
-            //        //        // --- 50 Hz 双级陷波 ---
-            //        //        double y1 = notch1[i].Process(yhp2);
-            //        //        double y2 = notch2[i].Process(y1);
-
-                           
-            //        //        // --- 新增：40 Hz 低通（两级，等效4阶） ---
-            //        //        double ylp1 = lpf1[i].Process(y2);
-            //        //        double ylp2 = lpf2[i].Process(ylp1);
-            //        //        double ylp3 = lpf3[i].Process(ylp2);
-
-            //        //        //---新增：5点中值去尖峰（实时） ---
-            //        //        double filterdata = Median5_Update(i, ylp3);
-
-            //        //        lineData[i].Append(g_index, filterdata);
-            //        //        if (i == 0)
-            //        //        {
-            //        //            File.AppendAllText(originalDataFile, x.ToString("G17") + " ");
-            //        //            File.AppendAllText(filterDataFile, filterdata.ToString("G17") + " ");
-            //        //            File.AppendAllText(originalDataNs2File, x.ToString("G17") + " ");
-            //        //            File.AppendAllText(filterDataNs2File, filterdata.ToString("G17") + " ");
-            //        //        }
-            //        //        save_data_buffer[buffer_save_index][i] = filterdata;
-            //        //    }
-            //        //    g_index += 0.002;
-            //        //    buffer_save_index++;
-            //        //    buffer_save_index %= 500;
-            //        //    if (buffer_save_index == 499)
-            //        //    {
-            //        //        save_data_buffer_all.Add(save_data_buffer);
-            //        //    }
-
-            //        //    //当前数据点与上次更新的数据差大于4x500个数据点或者当前数据少于WindowSizex500
-            //        //    if (Convert.ToInt32(g_index) - g_old_ecg_time > 4 || Convert.ToInt32(g_index) < WindowSize)
-            //        //    {
-            //        //        g_old_ecg_time = Convert.ToInt32(g_index);
-
-            //        //        if (Convert.ToInt32(g_index) < WindowSize)
-            //        //        {
-            //        //            g_old_ecg_time = Convert.ToInt32(WindowSize - 5);
-            //        //        }
-            //        //        this.Dispatcher.BeginInvoke((Action)delegate ()
-            //        //        {
-            //        //            sciChartSurface.XAxis.VisibleRange = ComputeXAxisRange(g_old_ecg_time);
-            //        //        });
-            //        //    }
-            //        //}
-
-            //    }
-
-
-
-
-
-            //}
-
-        }
        
      
         private static DoubleRange ComputeXAxisRange(double t)

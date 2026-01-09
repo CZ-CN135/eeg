@@ -260,8 +260,11 @@
     </Compile>
     <Compile Include="Power\PowerSpectralDensityAnalyzer.cs" />
     <Compile Include="Power\SpectrumAnalysisEventArgs1.cs" />
+    <Compile Include="tool\BandPowerRatioDetector.cs" />
     <Compile Include="tool\HexDataProcessor.cs" />
+    <Compile Include="tool\SeizureDetector.cs" />
     <Compile Include="tool\SinceWave.cs" />
+    <Compile Include="tool\Stage2Config.cs" />
     <Compile Include="viewModel\MainViewModel.cs" />
     <Compile Include="viewModel\ViewModelLocator.cs" />
     <Page Include="MainWindow.xaml">

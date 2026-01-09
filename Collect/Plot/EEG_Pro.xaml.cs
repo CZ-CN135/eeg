@@ -207,8 +207,7 @@ namespace Collect.Plot
             channel_6.IsChecked = true;
             channel_7.IsChecked = true;
             channel_8.IsChecked = true;
-            eeg.Ecg_ProEvent += EEG_Ecg_ProEvent;
-            eeg.SpectrumAnalysisEvent += EEG_SpectrumAnalysisEvent;
+           
         }
 
 
@@ -334,103 +333,7 @@ namespace Collect.Plot
 
             return rp;
         }
-        private void EEG_Ecg_ProEvent(object sender, EcgPowerEventArgs e)
-        {
-            if(e.psdResult!=null)
-            {
-                bool Refresh = false;
-                for (int i = 0;i<e.psdResult.Frequencies.Length;i++)
-                {
-                    spectrumLineData[e.ch].Append(e.psdResult.Frequencies[i], e.psdResult.PowerSpectralDensityDB[i]);//.Update(i, Math.Sin(i * 0.1 + phase)+j);
-                }
-               
-            }
-            //if (eeg.Isclearplot_pro)
-            //{
-            //    yy_index = 0;
-            //    coryy = 0;
-            //    g_index = 0;
-            //    g_old_ecg_time = 0;
-            //    yy.Clear();
-            //    yy1.Clear();
-            //    save_data_buffer.Clear();
-            //    save_data_buffer_all.Clear();
-            //    //sciChartSurface.XAxis.VisibleRange = new DoubleRange(0, 10);
-            //    for (int i = 0; i < 8; i++)
-            //    {
-            //        lineData[i].Clear();
-            //    }
-            //    eeg.Isclearplot_pro = false;
-            //}
-            //for (int m = 0; m < 10; m++)
-            //{
-            //    Buffer.BlockCopy(e.value, 4 + 16 * m, sdata_all, 0, 16);
-            //    for (int a = 0; a < 8; a++)
-            //    {
-            //        y = Convert.ToDouble(sdata_all[a]);
-            //        y0 = y - coryy;
-            //        yy[a][yy_index] = y0;
-
-            //        if (yy_index == 49 & coryy == 0)
-            //        {
-            //            coryy = yy[a].Mean();
-
-            //        }
-            //    }
-            //    yy_index++;
-            //    yy_index %= 50;
-            //    if (yy_index == 49)
-            //    {
-            //        for (int i = 0; i < 50; i++)
-            //        {
-            //            for (int j = 0; j < 8; j++)
-            //            {
-            //                yy1[j][i] = iir(yy[j][49] - yy[j].Mean());
-            //                lineData[j].Append(g_index, yy1[j][i] * 0.1 * g_scale + 3000 - j * 100);//.Update(i, Math.Sin(i * 0.1 + phase)+j);
-            //                save_data_buffer[i][j] = yy1[j][i];
-
-            //            }
-
-            //            g_index += 0.002;
-            //        }
-
-            //        pha = FHTHilbert(yy1[0]);
-
-            //        if (IsStm)
-            //        {
-            //            this.Dispatcher.BeginInvoke((Action)delegate ()
-            //            {
-            //                if (!string.IsNullOrWhiteSpace(ch.Text))
-            //                {
-            //                    if (stimulation(pha[49], yy1[int.Parse(ch.Text) - 1][49]) == 1)
-            //                    {
-            //                        eeg.client.IsWri = true;
-            //                        NlogHelper.WriteInfoLog($"通道{int.Parse(ch.Text)}已给出刺激了");
-            //                    }
-            //                }
-            //            });
-            //        }
-
-            //        save_data_buffer_all.Add(save_data_buffer);
-
-            //    }
-
-            //    if (Convert.ToInt32(g_index) - g_old_ecg_time > 4 || Convert.ToInt32(g_index) < WindowSize)
-            //    {
-            //        g_old_ecg_time = Convert.ToInt32(g_index);
-
-            //        if (Convert.ToInt32(g_index) < WindowSize)
-            //        {
-            //            g_old_ecg_time = Convert.ToInt32(WindowSize - 5);
-            //        }
-            //        this.Dispatcher.BeginInvoke((Action)delegate ()
-            //        {
-            //            sciChartSurface.XAxis.VisibleRange = ComputeXAxisRange(g_old_ecg_time);
-            //        });
-            //    }
-            //}
-
-        }
+        
 
         public void button_save_fil_ecg()
         {

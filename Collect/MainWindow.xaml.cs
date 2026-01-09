@@ -27,7 +27,7 @@ namespace Collect
 
         Plot.EEG_Pro eeg_pro;
         Plot.EEG_Filter eeg_filter;
-        private Button btn_save;
+        
 
         public MainWindow()
         {
@@ -40,37 +40,42 @@ namespace Collect
             eeg_pro = new Plot.EEG_Pro(eeg);
             eeg_filter = new Plot.EEG_Filter(eeg);
 
-            //tcp
-            btn_save = new System.Windows.Controls.Button();
-            btn_save.Content = "保存滤波ns2数据";
-            btn_save.FontSize = 15;
-            btn_save.Margin = new Thickness(0, 10, 0, 0);
-            btn_save.Click += Btn_save_filter_filter_Click;
+            //AP
+            //APstackpanel
+            stackpanel1 = new StackPanel();
+            stackpanel1.Orientation = Orientation.Vertical;
 
-            btn_save_filter_excel = new System.Windows.Controls.Button();
-            btn_save_filter_excel.Content = "保存滤波Excel数据";
-            btn_save_filter_excel.FontSize = 15;
-            btn_save_filter_excel.Margin= new Thickness(0, 10, 0, 0);
-            btn_save_filter_excel.Click += Btn_save_filter_excel_Click;
+            //IP地址textblock
+            stackpanel1.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "IP地址"
+            });
+            //IP地址textbox
+            Iptextbox = new System.Windows.Controls.TextBox();
+            Iptextbox.Text = "192.168.4.1";
+            Iptextbox.FontSize = 15;
+            stackpanel1.Children.Add(Iptextbox);
 
-            btn_save_filter_ns2 = new System.Windows.Controls.Button();
-            btn_save_filter_ns2.Content = "保存原始ns2数据";
-            btn_save_filter_ns2.FontSize = 15;
-            btn_save_filter_ns2.Margin = new Thickness(0, 10, 0, 0);
-            btn_save_filter_ns2.Click += Btn_save_original_ns2_Click;
+            //端口号textblock
+            stackpanel1.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "端口号"
+            });
+            //端口号textbox
+            Porttextbox = new System.Windows.Controls.TextBox();
+            Porttextbox.Text = "4321";
+            Porttextbox.FontSize = 15;
+            stackpanel1.Children.Add(Porttextbox);
 
-            btn_save_filter = new System.Windows.Controls.Button();
-            btn_save_filter.Content = "保原始Excel数据";
-            btn_save_filter.FontSize = 15;
-            btn_save_filter.Margin = new Thickness(0, 10, 0, 0);
-            btn_save_filter.Click += Btn_save_original_excel_Click;
-
-            btn_clear = new System.Windows.Controls.Button();
-            btn_clear.Content = "清除";
-            btn_clear.FontSize = 15;
-            btn_clear.Margin = new Thickness(0, 10, 0, 0);
-            btn_clear.Click += btn_clear_Click;
-
+            //放大倍数textblock
+            stackpanel1.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "放大倍数"
+            });
+            //放大倍数选择框
             comboBox1 = new ComboBox();
             comboBox1.FontSize = 15;
             comboBox1.Items.Add(new ComboBoxItem()
@@ -98,247 +103,148 @@ namespace Collect
                 Content = "100"
             });
             comboBox1.SelectionChanged += ComboBox1_SelectionChanged;
+            stackpanel1.Children.Add(comboBox1);
 
-            stackpanel1 = new StackPanel();
-            stackpanel1.Orientation = Orientation.Vertical;
-
+            //PGATextBlock
             stackpanel1.Children.Add(new TextBlock
             {
                 FontSize = 15,
-                Text = "IP地址"
+                Text = "PGA"
             });
+            //PGATextBox
+            PGAbox = new System.Windows.Controls.TextBox();
+            PGAbox.Text = "24";
+            PGAbox.FontSize = 15;
+            stackpanel1.Children.Add(PGAbox);
 
-            Iptextbox = new System.Windows.Controls.TextBox();
-            Iptextbox.Text = "192.168.4.1";
-            Iptextbox.FontSize = 15;
-            stackpanel1.Children.Add(Iptextbox);
-
+            //滤波采样率TextBlock
             stackpanel1.Children.Add(new TextBlock
             {
                 FontSize = 15,
-                Text = "端口号"
+                Text = "滤波采样率"
             });
+            //滤波采样率TextBox
+            fcbox = new System.Windows.Controls.TextBox();
+            fcbox.Text = "1000";
+            fcbox.FontSize = 15;
+            stackpanel1.Children.Add(fcbox);
 
-            Porttextbox = new System.Windows.Controls.TextBox();
-            Porttextbox.Text = "4321";
-            Porttextbox.FontSize = 15;
-            stackpanel1.Children.Add(Porttextbox);
-
-            stackpanel1.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "放大倍数"
-            });
-            
-
+            //AP开始按钮
             Button btn_tcp = new System.Windows.Controls.Button();
             btn_tcp.Content = "开始";
             btn_tcp.FontSize = 15;
             btn_tcp.Margin = new Thickness(0, 10, 0, 0);
             btn_tcp.Click += Btn_tcp_Click;
 
-            stackpanel1.Children.Add(comboBox1);
-            stackpanel1.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "PGA"
-            });
+            //保存滤波ns2数据按钮
+            Button btn_save_filter_ns2 = new System.Windows.Controls.Button();
+            btn_save_filter_ns2.Content = "保存滤波ns2数据";
+            btn_save_filter_ns2.FontSize = 15;
+            btn_save_filter_ns2.Margin = new Thickness(0, 10, 0, 0);
+            btn_save_filter_ns2.Click += Btn_save_filter_filter_Click;
+            //保存滤波Excel数据按钮
+            Button btn_save_filter_excel = new System.Windows.Controls.Button();
+            btn_save_filter_excel.Content = "保存滤波Excel数据";
+            btn_save_filter_excel.FontSize = 15;
+            btn_save_filter_excel.Margin = new Thickness(0, 10, 0, 0);
+            btn_save_filter_excel.Click += Btn_save_filter_excel_Click;
+            //保存原始ns2数据按钮
+            Button btn_save_original_ns2 = new System.Windows.Controls.Button();
+            btn_save_original_ns2.Content = "保存原始ns2数据";
+            btn_save_original_ns2.FontSize = 15;
+            btn_save_original_ns2.Margin = new Thickness(0, 10, 0, 0);
+            btn_save_original_ns2.Click += Btn_save_original_ns2_Click;
+            //保存原始Excel数据按钮
+            Button btn_save_original_excel = new System.Windows.Controls.Button();
+            btn_save_original_excel.Content = "保原始Excel数据";
+            btn_save_original_excel.FontSize = 15;
+            btn_save_original_excel.Margin = new Thickness(0, 10, 0, 0);
+            btn_save_original_excel.Click += Btn_save_original_excel_Click;
+            //清除按钮
+            Button btn_clear = new System.Windows.Controls.Button();
+            btn_clear.Content = "清除";
+            btn_clear.FontSize = 15;
+            btn_clear.Margin = new Thickness(0, 10, 0, 0);
+            btn_clear.Click += btn_clear_Click;
 
-            PGAbox = new System.Windows.Controls.TextBox();
-            PGAbox.Text = "24";
-            PGAbox.FontSize = 15;
-            stackpanel1.Children.Add(PGAbox);
-
-            stackpanel1.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "滤波采样率"
-            });
-            fcbox= new System.Windows.Controls.TextBox();
-            fcbox.Text = "1000";
-            fcbox.FontSize = 15;
-            stackpanel1.Children.Add(fcbox);
-
+            //添加控件到APstackpanel
             stackpanel1.Children.Add(btn_tcp);
-            stackpanel1.Children.Add(btn_save);
-            stackpanel1.Children.Add(btn_save_filter_excel);
             stackpanel1.Children.Add(btn_save_filter_ns2);
-            stackpanel1.Children.Add(btn_save_filter);
+            stackpanel1.Children.Add(btn_save_filter_excel);
+            stackpanel1.Children.Add(btn_save_original_ns2);
+            stackpanel1.Children.Add(btn_save_original_excel);
             stackpanel1.Children.Add(btn_clear);
 
+            ////PWM
+            //stackpanel3 = new StackPanel();
+            //stackpanel3.Orientation = Orientation.Vertical;
 
-            //com
-            btn_save_com = new System.Windows.Controls.Button();
-            btn_save_com.Content = "保存原始曲线数据";
-            btn_save_com.FontSize = 15;
-            btn_save_com.Margin = new Thickness(0, 10, 0, 0);
-           
+            //stackpanel3.Children.Add(new TextBlock
+            //{
+            //    FontSize = 15,
+            //    Text = "占空比(%)"
+            //});
 
-       
+            //Dutytextbox = new System.Windows.Controls.TextBox();
+            //Dutytextbox.Text = "50";
+            //Dutytextbox.FontSize = 15;
+            //stackpanel3.Children.Add(Dutytextbox);
 
-            btn_save_filter_com = new System.Windows.Controls.Button();
-            btn_save_filter_com.Content = "保存滤波数据";
-            btn_save_filter_com.FontSize = 15;
-            btn_save_filter_com.Margin = new Thickness(0, 10, 0, 0);
+            //stackpanel3.Children.Add(new TextBlock
+            //{
+            //    FontSize = 15,
+            //    Text = "频率(Hz)"
+            //});
 
+            //Freqtextbox = new System.Windows.Controls.TextBox();
+            //Freqtextbox.Text = "200";
+            //Freqtextbox.FontSize = 15;
+            //stackpanel3.Children.Add(Freqtextbox);
 
-
-            btn_clear_com = new System.Windows.Controls.Button();
-            btn_clear_com.Content = "清除";
-            btn_clear_com.FontSize = 15;
-            btn_clear_com.Margin = new Thickness(0, 10, 0, 0);
-            btn_clear_com.Click += btn_clear_Click;
-
-            comboBox1_com = new ComboBox();
-            comboBox1_com.FontSize = 15;
-            comboBox1_com.Items.Add(new ComboBoxItem()
-            {
-                Content = "0.1"
-            });
-            comboBox1_com.Items.Add(new ComboBoxItem()
-            {
-                Content = "0.5"
-            });
-            comboBox1_com.Items.Add(new ComboBoxItem()
-            {
-                Content = "1"
-            });
-            comboBox1_com.Items.Add(new ComboBoxItem()
-            {
-                Content = "5"
-            });
-            comboBox1_com.Items.Add(new ComboBoxItem()
-            {
-                Content = "10"
-            });
-            comboBox1_com.Items.Add(new ComboBoxItem()
-            {
-                Content = "100"
-            });
-            comboBox1_com.SelectionChanged += ComboBox1_SelectionChanged;
-            stackpanel2 = new StackPanel();
-            stackpanel2.Orientation = Orientation.Vertical;
-
-            stackpanel2.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "串口号"
-            });
-
-            comboBox = new ComboBox();
-            comboBox.FontSize = 15;
-            comboBox.DropDownOpened += ComboBox_DropDownOpened;
-            stackpanel2.Children.Add(comboBox);
-
-            stackpanel2.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "放大倍数"
-            });
+            //stackpanel3.Children.Add(new TextBlock
+            //{
+            //    FontSize = 15,
+            //    Text = "时间(ms)"
+            //});
 
 
-            Button com_tcp = new System.Windows.Controls.Button();
-            com_tcp.Content = "开始";
-            com_tcp.FontSize = 15;
-            com_tcp.Margin = new Thickness(0, 10, 0, 0);
-            com_tcp.Click += Com_tcp_Click;
-            stackpanel2.Children.Add(comboBox1_com);
-            stackpanel2.Children.Add(com_tcp);
+            //Timetextbox = new System.Windows.Controls.TextBox();
+            //Timetextbox.Text = "200";
+            //Timetextbox.FontSize = 15;
+            //stackpanel3.Children.Add(Timetextbox);
 
-            stackpanel2.Children.Add(btn_save_com);
-            stackpanel2.Children.Add(btn_save_filter_com);
-            stackpanel2.Children.Add(btn_clear_com);
+            //Button btn_send = new System.Windows.Controls.Button();
+            //btn_send.Content = "开始";
+            //btn_send.FontSize = 15;
+            //btn_send.Margin = new Thickness(0, 10, 0, 0);
+            //btn_send.Click += Btn_send_Click;
+            //stackpanel3.Children.Add(btn_send);
 
-
-
-            //pwm
-            stackpanel3 = new StackPanel();
-            stackpanel3.Orientation = Orientation.Vertical;
-
-            stackpanel3.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "占空比(%)"
-            });
-
-            Dutytextbox = new System.Windows.Controls.TextBox();
-            Dutytextbox.Text = "50";
-            Dutytextbox.FontSize = 15;
-            stackpanel3.Children.Add(Dutytextbox);
-
-            stackpanel3.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "频率(Hz)"
-            });
-
-            Freqtextbox = new System.Windows.Controls.TextBox();
-            Freqtextbox.Text = "200";
-            Freqtextbox.FontSize = 15;
-            stackpanel3.Children.Add(Freqtextbox);
-
-            stackpanel3.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "时间(ms)"
-            });
-
-
-            Timetextbox = new System.Windows.Controls.TextBox();
-            Timetextbox.Text = "200";
-            Timetextbox.FontSize = 15;
-            stackpanel3.Children.Add(Timetextbox);
-
-            Button btn_send = new System.Windows.Controls.Button();
-            btn_send.Content = "开始";
-            btn_send.FontSize = 15;
-            btn_send.Margin = new Thickness(0, 10, 0, 0);
-            btn_send.Click += Btn_send_Click;
-            stackpanel3.Children.Add(btn_send);
-
-            //filter
+            //Offline
+            //OffLine stackpanel
             stackpanel4 = new StackPanel();
             stackpanel4.Orientation = Orientation.Vertical;
+
+            //采样频率textblock
             stackpanel4.Children.Add(new TextBlock
             {
                 FontSize = 15,
                 Text = "采样频率(Hz)"
             });
-
+            //采样频率textbox
             Freqtextbox_filter = new System.Windows.Controls.TextBox();
             Freqtextbox_filter.Text = "1000";
             Freqtextbox_filter.FontSize = 15;
             stackpanel4.Children.Add(Freqtextbox_filter);
-
-            //stackpanel4.Children.Add(new TextBlock
-            //{
-            //    FontSize = 15,
-            //    Text = "阶数"
-            //});
-
-            //Ordertextbox_filter = new System.Windows.Controls.TextBox();
-            //Ordertextbox_filter.Text = "4";
-            //Ordertextbox_filter.FontSize = 15;
-            //stackpanel4.Children.Add(Ordertextbox_filter);
-
-            //stackpanel4.Children.Add(new TextBlock
-            //{
-            //    FontSize = 15,
-            //    Text = "截止频率(Hz)"
-            //});
-
-            //EndFreqtextbox_filter_com = new System.Windows.Controls.TextBox();
-            //EndFreqtextbox_filter_com.Text = "50";
-            //EndFreqtextbox_filter_com.FontSize = 15;
-            //stackpanel4.Children.Add(EndFreqtextbox_filter_com);
             
+            //读取数据
             btn_filter = new System.Windows.Controls.Button();
             btn_filter.Content = "读取数据";
             btn_filter.FontSize = 15;
             btn_filter.Margin = new Thickness(0, 10, 0, 0);
             btn_filter.Click += Btn_filter_Click;
             stackpanel4.Children.Add(btn_filter);
-
+            //保存滤波数据
             btn_save_offline = new System.Windows.Controls.Button();
             btn_save_offline.Content = "保存滤波数据";
             btn_save_offline.FontSize = 15;
@@ -346,13 +252,69 @@ namespace Collect
             btn_save_offline.Click += Btn_save_offline_Click; ;
             stackpanel4.Children.Add(btn_save_offline);
 
-            //btn_clear_original_filter_txt = new System.Windows.Controls.Button();
-            //btn_clear_original_filter_txt.Content = "清除文本数据";
-            //btn_clear_original_filter_txt.FontSize = 15;
-            //btn_clear_original_filter_txt.Margin = new Thickness(0, 10, 0, 0);
-            //btn_clear_original_filter_txt.Click += Btn_clear_original_filter_txt_Click;
-            //stackpanel4.Children.Add(btn_clear_original_filter_txt);
+            //ThreShold
+            //ThreShold stackpanel
+            ThreSholdstackpanel= new StackPanel();
+            ThreSholdstackpanel.Orientation = Orientation.Vertical;
+            //LL最小值
+            ThreSholdstackpanel.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "LL最小值"
+            });
+            //LL最小值textbox
+            LLMintextbox = new System.Windows.Controls.TextBox();
+            LLMintextbox.Text = "0";
+            LLMintextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(LLMintextbox);
 
+            //LL最大值
+            ThreSholdstackpanel.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "LL最大值"
+            });
+            //LL最大值textbox
+            LLMaxtextbox = new System.Windows.Controls.TextBox();
+            LLMaxtextbox.Text = "100";
+            LLMaxtextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(LLMaxtextbox);
+
+            //RMS最小值
+            ThreSholdstackpanel.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "RMS最小值"
+            });
+            //RMS最小值textbox
+            RMSMintextbox = new System.Windows.Controls.TextBox();
+            RMSMintextbox.Text = "0";
+            RMSMintextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(RMSMintextbox);
+
+            //RMS最大值
+            ThreSholdstackpanel.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "RMS最大值"
+            });
+            //RMS相对带功率textbox
+            RMSMaxtextbox = new System.Windows.Controls.TextBox();
+            RMSMaxtextbox.Text = "100";
+            RMSMaxtextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(RMSMaxtextbox);
+
+            //Alpha相对带功率
+            ThreSholdstackpanel.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "Alpha相对带功率"
+            });
+            //Alpha相对带功率textbox
+            Alphatextbox = new System.Windows.Controls.TextBox();
+            Alphatextbox.Text = "0.2";
+            Alphatextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(Alphatextbox);
         }
 
         private void Btn_save_offline_Click(object sender, RoutedEventArgs e)
@@ -368,29 +330,13 @@ namespace Collect
         //开始滤波
         private void Btn_filter_Click(object sender, RoutedEventArgs e)
         {
-            data=eeg_filter.LoadExcelAs2DArray(Freqtextbox_filter.Text);
-            //var button = sender as Button;
-            //var content = button.Content.ToString();
-            //if (content == "开始")
-            //{
-            //    eeg_filter.IsFilter = true;
-            //    eeg_filter.Freq = int.Parse(Freqtextbox_filter.Text);
-            //    eeg_filter.Order = int.Parse(Ordertextbox_filter.Text);
-            //    eeg_filter.EndFreq = int.Parse(EndFreqtextbox_filter_com.Text);
-            //    NlogHelper.WriteInfoLog("滤波参数已就绪，开始滤波");
-            //    button.Content = "结束";
-            //}
-            //else
-            //{
-            //    eeg_filter.IsFilter = false;
-            //    NlogHelper.WriteWarnLog("停止滤波");
-            //    button.Content = "开始";
-            //}
+            eeg_filter.LLMin= Convert.ToDouble(LLMintextbox.Text);
+            eeg_filter.LLMax= Convert.ToDouble(LLMaxtextbox.Text);
+            eeg_filter.RMSMin= Convert.ToDouble(RMSMintextbox.Text);
+            eeg_filter.RMSMax= Convert.ToDouble(RMSMaxtextbox.Text);
+            eeg_filter.Alpha = Convert.ToDouble(Alphatextbox.Text);
+            data =eeg_filter.LoadExcelAs2DArray(Freqtextbox_filter.Text);
         }
-
-       
-
-
 
         private TextBox Iptextbox;
         private TextBox PGAbox;
@@ -405,22 +351,18 @@ namespace Collect
         private TextBox Freqtextbox;
         private TextBox Timetextbox;
         private TextBox Freqtextbox_filter;
-        private TextBox Ordertextbox_filter;
-        private TextBox EndFreqtextbox_filter_com;
+        private TextBox LLMintextbox;
+        private TextBox LLMaxtextbox;
+        private TextBox RMSMaxtextbox;
+        private TextBox Alphatextbox;
+        private TextBox RMSMintextbox;
+
         private StackPanel stackpanel1;
         private StackPanel stackpanel2;
         private StackPanel stackpanel3;
         private StackPanel stackpanel4;
-        private Button btn_save_filter;
-        private Button btn_clear;
-        private Button btn_save_com;
-        private Button btn_save_filter_com;
-        private Button btn_save_filter_excel;
-        private Button btn_save_filter_ns2;
-        private Button btn_clear_com;
+        private StackPanel ThreSholdstackpanel;
         private Button btn_filter;
-        private Button btn_clear_original_filter_txt;
-        private ComboBox comboBox1_com;
         private Button btn_save_offline;
 
         private void ListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -532,9 +474,6 @@ namespace Collect
 
         }
 
-
-
-
         private void listbox1_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             var Item = sender as ListBox;
@@ -560,6 +499,36 @@ namespace Collect
             {
                 groupbox.Visibility = Visibility.Visible;
                 groupbox.Content = stackpanel4;
+            }
+            if(tag=="ThreShold")
+            {
+                groupbox.Visibility = Visibility.Visible;
+                groupbox.Content = ThreSholdstackpanel;
+            }
+        }
+
+        //TCP开始
+        private void Btn_tcp_Click(object sender, RoutedEventArgs e)
+        {
+            var button = sender as Button;
+            var content = button.Content.ToString();
+            bool sucess = eeg.TCP_Install_ecg(content, Iptextbox.Text, int.Parse(Porttextbox.Text));
+            eeg.PGA = Convert.ToInt16(PGAbox.Text);
+            eeg.LLMin= Convert.ToDouble(LLMintextbox.Text);
+            eeg.LLMax= Convert.ToDouble(LLMaxtextbox.Text);
+            eeg.RMSMin= Convert.ToDouble(RMSMintextbox.Text);
+            eeg.RMSMax= Convert.ToDouble(RMSMaxtextbox.Text);
+            eeg.Alpha = Convert.ToDouble(Alphatextbox.Text);
+            eeg.set_filter_params(Convert.ToDouble(fcbox.Text));
+            if (sucess)
+            {
+                //eeg.client.IsWri_start = true;
+                button.Content = "结束";
+            }
+            else
+            {
+                //eeg.client.IsWri_start = false;
+                button.Content = "开始";
             }
         }
 
@@ -587,7 +556,6 @@ namespace Collect
             
         }
 
-       
         private void ComboBox1_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             eeg.ComboBox_amplitude(comboBox1.SelectedIndex);
@@ -597,7 +565,6 @@ namespace Collect
         private void btn_clear_Click(object sender, RoutedEventArgs e)
         {
             eeg.Clear_Plot();
-
         }
 
         private void Btn_save_filter_filter_Click(object sender, RoutedEventArgs e)
@@ -674,28 +641,6 @@ namespace Collect
                 {
                     comboBox.SelectedItem = s;
                 }
-            }
-        }
-
-
-        //TCP开始
-        private void Btn_tcp_Click(object sender, RoutedEventArgs e)
-        {
-
-            var button = sender as Button;
-            var content = button.Content.ToString();
-            bool sucess = eeg.TCP_Install_ecg(content, Iptextbox.Text, int.Parse(Porttextbox.Text));
-            eeg.PGA = Convert.ToInt16(PGAbox.Text);
-            eeg.set_filter_params(Convert.ToDouble(fcbox.Text));
-            if (sucess)
-            {
-                eeg.client.IsWri_start = true;
-                button.Content = "结束";
-            }
-            else
-            {
-                eeg.client.IsWri_start = false;
-                button.Content = "开始";
             }
         }
 

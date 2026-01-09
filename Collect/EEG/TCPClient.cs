@@ -1,138 +1,57 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.RightsManagement;
 using System.Threading;
-using System.Windows;
 
 namespace Collect.EEG
 {
-    //定义了一个名为 EcgEventHandler 的委托
     public delegate void EcgTCPEventHandler(object sender, EcgTCPEventArgs e);
+
     public class TCPClient
     {
-        //声明了一个名为 EcgEvent 的事件，该事件使用 EcgEventHandler 委托
         public event EcgTCPEventHandler EcgEvent;
 
         TcpClient client;
         public TcpListener tcpListener;
         string IPAdress;
         int Port;
+
         public string freq2;
         public string duty2;
         public string time2;
 
-
         Thread th = null;
-        bool run = false;
+        private volatile bool run = false;
 
         public bool g_bInstall = false;
-
         string g_err = "Init";
 
-        byte g_data_length_num = 3;
         byte ifA0 = 0;
         byte ifB0 = 0;
-        byte ifC0 = 0;
         int g_packet_length = 0;
-        int g_data_length = 0;
-        byte g_board_index = 0;
-        byte checksum = 0;
-        byte checksum2 = 0;
         byte[] g_data = new byte[1024];
-        //int parse_data(byte data)
-        //{
-        //    if (g_packet_length == 0)
-        //    {
-        //        if (data == 0xAA)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            checksum = data; checksum2 = checksum;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //            g_packet_length = 0;
-        //        return -1;
-        //    }
 
-        //    if (g_packet_length == 1)
-        //    {
-        //        if (data == 0xFF)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            checksum += data;
-        //            checksum2 += checksum;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //            g_packet_length = 0;
-        //        return -1;
-        //    }
+        // ========= 新增：发送队列（线程安全）=========
+        private readonly ConcurrentQueue<byte[]> _txQueue = new ConcurrentQueue<byte[]>();
 
-        //    if (g_packet_length == 2)
-        //    {
-        //        g_board_index = data;
-        //        g_data[g_packet_length] = data;
-        //        checksum += data; checksum2 += checksum;
-        //        g_packet_length++;
-        //        return -1;
-        //    }
+        /// <summary>
+        /// 统一排队发送 3 字节命令：FF cmd FE
+        /// </summary>
+        public void EnqueueCommand(byte cmd)
+        {
+            _txQueue.Enqueue(new byte[] { 0xFF, cmd, 0xFE });
+        }
 
-        //    if (g_packet_length == 3)
-        //    {
-        //        if (data == 0x10)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            checksum += data; checksum2 += checksum;
-        //            g_data_length = 16;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //            g_packet_length = 0;
-        //        return -1;
-        //    }
+        // 你要的几类命令（可读性更好）
+        public void EnqueueStartCmd() => EnqueueCommand(0xF1); // FF F1 FE
+        public void EnqueueStopCmd() => EnqueueCommand(0xF2); // FF F2 FE
+        public void EnqueueMode1Cmd() => EnqueueCommand(0x04); // FF 04 FE
+        public void EnqueueMode2Cmd() => EnqueueCommand(0x03); // FF 03 FE
 
-        //    if (g_packet_length < g_data_length + 4)
-        //    {
-        //        g_data[g_packet_length] = data;
-        //        checksum += data; checksum2 += checksum;
-        //        g_packet_length++;
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length == g_data_length + 4)
-        //    {
-        //        if (checksum == data)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //        {
-        //            g_packet_length = 0;
-        //            checksum = 0;
-        //            checksum2 = 0;
-        //        }
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length == g_data_length + 5)
-        //    {
-        //        if (checksum2 == data)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            if (EcgEvent != null)
-        //                EcgEvent(this, new EcgTCPEventArgs(g_data));
-        //        }
-        //        g_packet_length = 0;
-        //        checksum = 0;
-        //        checksum2 = 0;
-        //    }
-
-        //    return -1;
-        //}
+        // ========= 你原来的解析（不改）=========
         int parse_data(byte data)
         {
             if (g_packet_length == 0)
@@ -143,8 +62,7 @@ namespace Collect.EEG
                     ifA0 = 1;
                     g_packet_length++;
                 }
-                else
-                    g_packet_length = 0;
+                else g_packet_length = 0;
                 return -1;
             }
 
@@ -156,8 +74,7 @@ namespace Collect.EEG
                     ifB0 = 1;
                     g_packet_length++;
                 }
-                else
-                    g_packet_length = 0;
+                else g_packet_length = 0;
                 return -1;
             }
 
@@ -175,8 +92,7 @@ namespace Collect.EEG
                     g_data[g_packet_length] = data;
                     g_packet_length++;
                 }
-                else
-                    g_packet_length = 0;
+                else g_packet_length = 0;
                 return -1;
             }
 
@@ -185,116 +101,25 @@ namespace Collect.EEG
                 if (data == 0xC0)
                 {
                     g_data[g_packet_length] = data;
-                    if (EcgEvent != null)
-                        EcgEvent(this, new EcgTCPEventArgs(g_data));
+                    EcgEvent?.Invoke(this, new EcgTCPEventArgs(g_data));
+
                     g_packet_length = 0;
                     ifA0 = 0;
                     ifB0 = 0;
                 }
-                else
-                    g_packet_length = 0;
+                else g_packet_length = 0;
                 return -1;
             }
             return -1;
         }
-        //解析每22个字节，checksum为前20个字节和，g_board_index为第3个字节数，g_packet_length为22数据包长度，g_data_length为第5到第18个字节
-        //int parse_data(byte data)
-        //{
-        //    if (g_packet_length == 0)
-        //    {
-        //        if (data == 0xAA)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            checksum = data; checksum2 = checksum;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //            g_packet_length = 0;
-        //        return -1;
-        //    }
 
-        //    if (g_packet_length == 1)
-        //    {
-        //        if (data == 0xFF)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            checksum += data;
-        //            checksum2 += checksum;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //            g_packet_length = 0;
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length == 2)
-        //    {
-        //        g_board_index = data;
-        //        g_data[g_packet_length] = data;
-        //        checksum += data; checksum2 += checksum;
-        //        g_packet_length++;
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length == 3)
-        //    {
-        //        if (data == 0x10)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            checksum += data; checksum2 += checksum;
-        //            g_data_length = 16;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //            g_packet_length = 0;
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length < g_data_length + 4)
-        //    {
-        //        g_data[g_packet_length] = data;
-        //        checksum += data; checksum2 += checksum;
-        //        g_packet_length++;
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length == g_data_length + 4)
-        //    {
-        //        if (checksum == data)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            g_packet_length++;
-        //        }
-        //        else
-        //        {
-        //            g_packet_length = 0;
-        //            checksum = 0;
-        //            checksum2 = 0;
-        //        }
-        //        return -1;
-        //    }
-
-        //    if (g_packet_length == g_data_length + 5)
-        //    {
-        //        if (checksum2 == data)
-        //        {
-        //            g_data[g_packet_length] = data;
-        //            if (EcgEvent != null)
-        //                EcgEvent(this, new EcgTCPEventArgs(g_data));
-        //        }
-        //        g_packet_length = 0;
-        //        checksum = 0;
-        //        checksum2 = 0;
-        //    }
-
-        //    return -1;
-        //}
-
+        // ========= 接收缓冲 =========
         Queue<byte> queue = new Queue<byte>();
+
+        // 你原来的“5字节参数发送”保留
         public bool IsWri = false;
-        public bool IsWri_start = false;
-        public bool IsWri_stop = false;
-        public void Senddata(NetworkStream networkStream,string freq,string duty,string time)
+
+        public void Senddata(NetworkStream networkStream, string freq, string duty, string time)
         {
             string binaryString = Convert.ToString(int.Parse(time), 2).PadLeft(16, '0');
             string highBits = binaryString.Substring(0, 8);
@@ -302,86 +127,89 @@ namespace Collect.EEG
             var timeH = Convert.ToByte(highBits, 2);
             var timeL = Convert.ToByte(lowBits, 2);
 
-            var freq1=Byte.Parse(freq);
-            var duty1=Byte.Parse(duty);
-    
-            byte[] sendBuffer = new byte[5] { 255, freq1, duty1,timeH,timeL };
+            var freq1 = Byte.Parse(freq);
+            var duty1 = Byte.Parse(duty);
+
+            byte[] sendBuffer = new byte[5] { 0xFF, freq1, duty1, timeH, timeL };
             networkStream.Write(sendBuffer, 0, sendBuffer.Length);
             IsWri = false;
         }
+
         void recvdata()
         {
             using (var stream = client.GetStream())
             {
-
-                while (run)
+                while (true)
                 {
+                    // ✅ 关键：Stop 时 run=false，但我们仍要把 txQueue 发完（至少要发出 StopCmd）
+                    if (!run && _txQueue.IsEmpty)
+                        break;
+
                     try
                     {
+                        // ===== 1) 先把待发送命令全部发出去（模式1/2/开始/停止 都走这里）=====
+                        while (_txQueue.TryDequeue(out var msg))
+                        {
+                            stream.Write(msg, 0, msg.Length);
+                        }
+
+                        // ===== 2) 你原来的 5 字节发送（如果还需要）=====
                         if (IsWri)
                         {
                             Senddata(stream, freq2, duty2, time2);
-                            IsWri=false;
+                            IsWri = false;
                         }
-                        if (IsWri_start)
-                        {
-                            byte[] sendBuffer = new byte[3] { 255, 241, 254 };
-                            stream.Write(sendBuffer, 0, sendBuffer.Length);
-                            NlogHelper.WriteInfoLog("已发送开始采集指令");
-                            IsWri_start = false;
-                        }
-                        if (IsWri_stop)
-                        {
-                       
-                            byte[] sendBuffer = new byte[3] { 255, 242, 254 };
-                            stream.Write(sendBuffer, 0, sendBuffer.Length);
-                            NlogHelper.WriteInfoLog("已发送停止采集指令");
-                            
-                            
-                            IsWri_stop=false;
-                        }
+
+                        // ===== 3) 接收数据 =====
                         if (client.Available > 0)
                         {
                             byte[] buffer = new byte[client.Available];
                             int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                            
+
                             if (bytesRead == 0)
                             {
                                 NlogHelper.WriteInfoLog("未收到数据");
                                 break;
                             }
-                            Monitor.Enter(queue);
-                            for (int i = 0; i < bytesRead; i++)
-                                queue.Enqueue(buffer[i]);
-                            Monitor.Exit(queue);
+
+                            lock (queue)
+                            {
+                                for (int i = 0; i < bytesRead; i++)
+                                    queue.Enqueue(buffer[i]);
+                            }
                         }
-                        if (queue.Count >= 1)
+
+                        // ===== 4) 解析 =====
+                        byte tempdata;
+                        bool hasByte = false;
+                        lock (queue)
                         {
-                            Monitor.Enter(queue);
-                            byte tempdata = queue.Dequeue();
-                            Monitor.Exit(queue);
-                            parse_data(tempdata);
+                            if (queue.Count >= 1)
+                            {
+                                tempdata = queue.Dequeue();
+                                hasByte = true;
+                            }
+                            else tempdata = 0;
                         }
+
+                        if (hasByte)
+                            parse_data(tempdata);
+
+                        // 让出一点CPU（可选）
+                      
                     }
                     catch (Exception ex)
                     {
-                
                         LogHelper.WriteErrorLog(ex.Message);
                         NlogHelper.WriteErrorLog(ex.Message);
                         break;
                     }
-
                 }
             }
-
         }
-      
 
-
-
-        public  bool Start(string ip, int port)
+        public bool Start(string ip, int port)
         {
-            //如果线程已创建
             if (th != null)
             {
                 g_err = "Thread which created for TCP port has beed created.";
@@ -402,18 +230,22 @@ namespace Collect.EEG
             }
             catch (Exception ex)
             {
-               
                 g_err = ex.Message;
                 LogHelper.WriteErrorLog(ex.Message);
                 NlogHelper.WriteErrorLog(ex.Message);
                 return false;
             }
 
-            if (client.Connected == true)
+            if (client.Connected)
             {
                 run = true;
                 th = new Thread(recvdata);
+                th.IsBackground = true;
                 th.Start();
+
+                // ✅ TCP开始就发送：FF F1 FE
+                EnqueueStartCmd();
+
                 LogHelper.WriteInfoLog("TCP采集数据线程成功创建,并开启");
                 NlogHelper.WriteInfoLog("TCP采集数据线程成功创建,并开启");
                 g_bInstall = true;
@@ -428,15 +260,13 @@ namespace Collect.EEG
             }
         }
 
-        public string GetLastError()
-        {
-            return g_err;
-        }
+        public string GetLastError() => g_err;
 
         public bool Stop()
         {
+            // ✅ TCP停止就发送：FF F2 FE（必须先排队，再 run=false，让线程把队列发完）
+            EnqueueStopCmd();
             run = false;
-            IsWri_stop = true;
 
             if (th != null)
             {
@@ -444,10 +274,9 @@ namespace Collect.EEG
                 th = null;
                 LogHelper.WriteInfoLog("TCP采集线程已停止并且销毁");
                 NlogHelper.WriteInfoLog("TCP采集线程已停止并且销毁");
-
             }
 
-            if (client.Connected == true)
+            if (client != null && client.Connected)
             {
                 try
                 {
@@ -466,8 +295,8 @@ namespace Collect.EEG
             else
             {
                 g_err = "TCP Port has been closed.";
-                LogHelper.WriteWarnLog("TCPd断开已经被关闭");
-                NlogHelper.WriteWarnLog("TCPd断开已经被关闭");
+                LogHelper.WriteWarnLog("TCP断开已经被关闭");
+                NlogHelper.WriteWarnLog("TCP断开已经被关闭");
                 return false;
             }
 
@@ -475,21 +304,16 @@ namespace Collect.EEG
             return true;
         }
     }
+
     public class EcgTCPEventArgs : EventArgs
     {
         public string com;
         public int type;
         public byte[] value;
-        //命令与值
-        //1、表示原始数据 0x80
-        //2、代表算好的心率 0x03
-        //3、表示信号质量 0x02
+
         public EcgTCPEventArgs(byte[] value)
         {
-
             this.value = value;
         }
-
-
     }
 }
