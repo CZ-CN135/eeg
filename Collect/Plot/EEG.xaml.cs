@@ -551,20 +551,20 @@ namespace Collect.Plot
             Buffer.BlockCopy(e.value, 2, eeg_data_byte, 0, 24);
 
             process_eegdata(eeg_data_byte);
-            //if (!_detectorInited)
-            //{
-            //    double fs = sampleRate; // 或从数据包/设备配置解析
-            //    InitAfterFsKnown(fs);
-            //    _detectorInited = true;
-            //}
-            //// 推给检测线程：原始 8通道（μV）
-            //if (_detector != null)
-            //{
-            //    double[] frame = new double[8];
-            //    for (int ch = 0; ch < 8; ch++)
-            //        frame[ch] = eeg_data_float[ch];   // 或者用你滤波后的 filterdata（更稳）
-            //    _detector.PushFrame(frame);
-            //}
+            if (!_detectorInited)
+            {
+                double fs = sampleRate; // 或从数据包/设备配置解析
+                InitAfterFsKnown(fs);
+                _detectorInited = true;
+            }
+            // 推给检测线程：原始 8通道（μV）
+            if (_detector != null)
+            {
+                double[] frame = new double[8];
+                for (int ch = 0; ch < 8; ch++)
+                    frame[ch] = eeg_data_float[ch];   // 或者用你滤波后的 filterdata（更稳）
+                _detector.PushFrame(frame);
+            }
             index++;
             for (int i = 0; i < 8; i++)
             {
