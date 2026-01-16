@@ -764,7 +764,7 @@ namespace Collect.Plot
                     using (var writer = new BinaryWriter(fs))
                     {
                         const int channelCount = 8;
-                        const int samplingRate = 500;
+                        const int samplingRate = 1000;
                         const int timeResolution = 30000;
                         const double quantization = 22.35e-9; // 量化步长 nV/bit
                         const short minAnalog = -1000;
@@ -1007,7 +1007,7 @@ namespace Collect.Plot
                     using (var writer = new BinaryWriter(fs))
                     {
                         const int channelCount = 8;
-                        const int samplingRate = 500;
+                        const int samplingRate = 1000;
                         const int timeResolution = 30000;
                         const double quantization = 22.35e-9; // 量化步长 nV/bit
                         const short minAnalog = -1000;
