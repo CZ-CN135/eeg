@@ -957,12 +957,11 @@ namespace Collect.Plot
                             sheetIndex++;
                             worksheet = CreateNewSheet(package, sheetIndex, ref currentRow);
                         }
+                        // 将 EEG 数据转换为整数（保留整数部分）
+                        var intData = buffer[i].Select(value => (int)Math.Floor(value)).ToArray();
 
-                        // 写一行 EEG 数据（8 通道）
-                        worksheet.Cells[currentRow, 1].LoadFromArrays(new[]
-                        {
-                    buffer[i].Cast<object>().ToArray()
-                });
+                        // 写一行整数类型的 EEG 数据（8 通道）
+                        worksheet.Cells[currentRow, 1].LoadFromArrays(new object[][] { intData.Cast<object>().ToArray() });
 
                         currentRow++;
                     }
@@ -1202,11 +1201,16 @@ namespace Collect.Plot
                             worksheet = CreateNewOriginalSheet(package, sheetIndex, ref currentRow);
                         }
 
-                        // 写一行 8 通道原始 EEG
-                        worksheet.Cells[currentRow, 1].LoadFromArrays(new[]
-                        {
-                            buffer[i].Cast<object>().ToArray()
-                        });
+                        //// 写一行 8 通道原始 EEG
+                        //worksheet.Cells[currentRow, 1].LoadFromArrays(new[]
+                        //{
+                        //    buffer[i].Cast<object>().ToArray()
+                        //});
+                        // 将 EEG 数据转换为整数（保留整数部分）
+                        var intData = buffer[i].Select(value => (int)Math.Floor(value)).ToArray();
+
+                        // 写一行整数类型的 EEG 数据（8 通道）
+                        worksheet.Cells[currentRow, 1].LoadFromArrays(new object[][] { intData.Cast<object>().ToArray() });
 
                         currentRow++;
                     }
