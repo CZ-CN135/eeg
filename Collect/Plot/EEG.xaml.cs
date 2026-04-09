@@ -1,23 +1,13 @@
-﻿using Accord.Audio.Filters;
-using Accord.Math;
-using Accord.Statistics.Kernels;
+﻿using Accord.Math;
 using Collect.EEG;
-using Collect.Power;
 using Collect.tool;
 using GalaSoft.MvvmLight.Threading;
-using MathNet.Filtering;
-using MathNet.Filtering.FIR;
 using Microsoft.Win32;
-using NWaves.Filters.BiQuad;
-using NWaves.Utils;
 using OfficeOpenXml;
 using SciChart.Charting.Model.DataSeries;
 using SciChart.Charting.Visuals.Axes;
 using SciChart.Charting.Visuals.RenderableSeries;
 using SciChart.Data.Model;
-using ScottPlot;
-using ScottPlot.Colormaps;
-using SkiaSharp.Views.Desktop;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -26,21 +16,18 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading.Tasks;
+using System.Web.Configuration;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Markup;
-using System.Windows.Media;
-using Xceed.Wpf.Toolkit;
-using static Collect.Power.PowerSpectralDensityAnalyzer;
-//using Collect.FIR;
-
+using System.Windows.Input;
+using System.Collections.Concurrent;
+using System.Numerics;
+using System.Threading;
 namespace Collect.Plot
 {
   
-
     /// <summary>
     /// EEG.xaml 的交互逻辑
     /// </summary>
@@ -69,7 +56,7 @@ namespace Collect.Plot
 
 
         public TCPClient client = new TCPClient();
-        SerialControl ecg_control = new SerialControl();
+
 
         const int CN = 8;
         public int PGA = 1;
@@ -77,7 +64,8 @@ namespace Collect.Plot
         public double LLMax = 1;
         public double RMSMin = 0;
         public double RMSMax = 10;
-        public double Alpha= 0;
+        public double Delta = 0.2;
+        public double Beta = 0.2;
         const int NL = 5;
         double[] NUM = new double[] { 0.9480807851293,   -3.070235355059,    4.381800263529,   -3.070235355059,
      0.9480807851293 };
@@ -91,7 +79,7 @@ namespace Collect.Plot
 
        
         short g_ecg_data = 0;
-        int g_old_ecg_time = 0;
+        double g_old_ecg_time = 0;
         double g_scale = 1;
         string localIp = "127.0.0.1";
         int localPort = 45555;
@@ -101,6 +89,37 @@ namespace Collect.Plot
         //存储远程端点
         IPEndPoint remoteIpep;
         UdpClient udpdata = new UdpClient();
+        private readonly object _saveBufferLock = new object();
+        private bool _isSaving = false;
+
+        // ===== 相对功率图数据 =====
+        private XyDataSeries<double, double> deltaRelSeries;
+        private XyDataSeries<double, double> thetaRelSeries;
+        private XyDataSeries<double, double> alphaRelSeries;
+        private XyDataSeries<double, double> betaRelSeries;
+
+        // ===== 后台相对功率线程 =====
+        private BlockingCollection<double> _powerQueue;
+        private CancellationTokenSource _powerCts;
+        private Task _powerTask;
+
+        // ===== 参数 =====
+        private const double RelPowerWindowSec = 4.0;   // 4秒窗
+        private const double RelPowerStepSec = 0.5;     // 每0.5秒更新
+        private const double RelPowerHistorySec = 12.0; // 显示最近12秒
+        private const int PowerQueueCapacity = 20000;   // 防止队列无限长
+        private double _powerTimeOffsetSec = 0.0;      // 历史时间偏移
+        private double _lastPowerXSec = 0.0;           // 当前图上最后一个功率点时间
+        private int _powerSessionId = 0;               // 防止旧线程残留UI更新
+
+        private struct RelativePowers
+        {
+            public double DeltaPct;
+            public double ThetaPct;
+            public double AlphaPct;
+            public double BetaPct;
+        }
+        private volatile int _powerChannelIndex = 0;   // 默认分析通道1
         public EEG()
         {
             //8行5列数组,CN=8,DN=5
@@ -121,8 +140,39 @@ namespace Collect.Plot
             //用于初始化与UI线程相关，用于管理UI线程的类
             DispatcherHelper.Initialize();
             InitializeComponent();
+            for (int i = 0; i < 8; i++)
+            {
+                cmbPowerChannel.Items.Add(new ComboBoxItem
+                {
+                    Content = $"通道{i + 1}"
+                });
+            }
+            cmbPowerChannel.SelectedIndex = 0;
+            _powerChannelIndex = 0;
             CreateChart();
-
+            InitRelativePowerChart();
+            StartRelativePowerWorker();
+            showdata.Items.Add(new ComboBoxItem
+            {
+                Content = "原始数据"
+            });
+            showdata.Items.Add(new ComboBoxItem
+            {
+                Content = "滤波数据"
+            });
+            runmode.Items.Add(new ComboBoxItem
+            {
+                Content = "开环"
+            });
+            runmode.Items.Add(new ComboBoxItem
+            {
+                Content = "闭环"
+            });
+            runmode.SelectedIndex = 0;
+            showdata.SelectedIndex = 1;
+            showdata.SelectionChanged += showdata_SelectionChanged;
+            runmode.SelectionChanged += runmode_SelectionChanged;
+            _showRawData = false;
             // 初始化定时器
             InitializeTimer();
 
@@ -157,7 +207,51 @@ namespace Collect.Plot
         XyDataSeries<double, double>[] lineData;
         private double g_index = 0;
         private int channel_num = 8;
+        private void cmbPowerChannel_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (cmbPowerChannel.SelectedIndex >= 0)
+                _powerChannelIndex = cmbPowerChannel.SelectedIndex;
+        }
+        private void InitRelativePowerChart()
+        {
+            deltaRelSeries = new XyDataSeries<double, double>() { FifoCapacity = 400 };
+            thetaRelSeries = new XyDataSeries<double, double>() { FifoCapacity = 400 };
+            alphaRelSeries = new XyDataSeries<double, double>() { FifoCapacity = 400 };
+            betaRelSeries = new XyDataSeries<double, double>() { FifoCapacity = 400 };
 
+            powerSurface.RenderableSeries.Clear();
+
+            powerSurface.RenderableSeries.Add(new FastLineRenderableSeries
+            {
+                Stroke = System.Windows.Media.Colors.Brown,
+                StrokeThickness = 2,
+                DataSeries = deltaRelSeries
+            });
+
+            powerSurface.RenderableSeries.Add(new FastLineRenderableSeries
+            {
+                Stroke = System.Windows.Media.Colors.Orange,
+                StrokeThickness = 2,
+                DataSeries = thetaRelSeries
+            });
+
+            powerSurface.RenderableSeries.Add(new FastLineRenderableSeries
+            {
+                Stroke = System.Windows.Media.Colors.Green,
+                StrokeThickness = 2,
+                DataSeries = alphaRelSeries
+            });
+
+            powerSurface.RenderableSeries.Add(new FastLineRenderableSeries
+            {
+                Stroke = System.Windows.Media.Colors.Blue,
+                StrokeThickness = 2,
+                DataSeries = betaRelSeries
+            });
+
+            powerSurface.XAxis.VisibleRange = new DoubleRange(0, RelPowerHistorySec);
+            powerSurface.YAxis.VisibleRange = new DoubleRange(0, 100);
+        }
         private void CreateChart()
         {
             var xAxis = new NumericAxis() { AxisTitle = "Time (second)", VisibleRange = new DoubleRange(0, 2000) };
@@ -180,9 +274,10 @@ namespace Collect.Plot
             for (int i = 0; i < 8; i++)
             {
                 //8行100列
-                //eeg_data_buffer[i] = new short[BaoLength];
+                
                 eeg_data_buffer[i] = new double[BaoLength];
-                eeg_data_buffer_baseline[i] = new short[BaoLength];
+                eeg_data_buffer_raw[i] = new double[BaoLength];
+
             }
             for (int i = 0; i < 500; i++)
             {
@@ -191,14 +286,7 @@ namespace Collect.Plot
                 save_data_buffer_original[i] = new double[8];
             }
 
-            // 初始化频谱分析器
-            psdAnalyzer = new PowerSpectralDensityAnalyzer();
-
-            // 初始化小波去噪缓冲区
-            for (int i = 0; i < 8; i++)
-            {
-                eeg_data_buffer_WaveletDenoise[i] = new double[BaoLength];
-            }
+                   
 
             var colors = new[]
             {
@@ -235,7 +323,34 @@ namespace Collect.Plot
             sciChartSurface.XAxis.VisibleRange = ComputeXAxisRange(0);
 
         }
-        private const double WindowSize = 10;
+        private const double WindowSize = 5;
+        private void showdata_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            ComboBoxItem item = showdata.SelectedItem as ComboBoxItem;
+            if (item == null || item.Content == null)
+            {
+                _showRawData = false;
+                return;
+            }
+
+            _showRawData = (item.Content.ToString() == "原始数据");
+        }
+        private void runmode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            ComboBoxItem item = runmode.SelectedItem as ComboBoxItem;
+            if (item == null || item.Content == null)
+                return;
+
+            string mode = item.Content.ToString();
+
+            _isClosedLoopMode = (mode == "闭环");
+
+            _madDetectorInited = false;
+            _madDetector = null;
+
+            LogHelper.WriteInfoLog($"当前运行模式：{mode}");
+            NlogHelper.WriteInfoLog($"当前运行模式：{mode}");
+        }
         private static DoubleRange ComputeXAxisRange(double t)
         {
             if (t < WindowSize)
@@ -243,7 +358,128 @@ namespace Collect.Plot
                 return new DoubleRange(0, WindowSize);
             }
             //t 值向上取整到最接近的整数
-            return new DoubleRange(Math.Ceiling(t) - WindowSize + 5, Math.Ceiling(t) + 5);
+            return new DoubleRange(Math.Ceiling(t) - WindowSize + 2.5, Math.Ceiling(t) + 2.5);
+            //if (t < WindowSize)
+            //    return new DoubleRange(0, WindowSize);
+
+            //return new DoubleRange(t - WindowSize, t);
+        }
+       
+        private double _lastPowerX = double.NegativeInfinity;
+
+        private void StartRelativePowerWorker()
+        {
+            StopRelativePowerWorker();
+
+            _powerSessionId++;
+
+            // 关键：不要清空 deltaRelSeries/thetaRelSeries/...，这样才会接着画
+            // 历史偏移 = 当前图最后一个X
+            _powerTimeOffsetSec = _lastPowerXSec;
+
+            _powerQueue = new BlockingCollection<double>(PowerQueueCapacity);
+            _powerCts = new CancellationTokenSource();
+
+            int sessionId = _powerSessionId;
+            _powerTask = Task.Run(() => RelativePowerWorkerLoop(_powerCts.Token, sessionId));
+        }
+        private void StopRelativePowerWorker()
+        {
+            try
+            {
+                if (_powerCts != null)
+                {
+                    _powerCts.Cancel();
+                    _powerQueue?.CompleteAdding();
+                    _powerTask?.Wait(300);
+                }
+            }
+            catch
+            {
+            }
+            finally
+            {
+                _powerTask = null;
+                _powerCts = null;
+                _powerQueue = null;
+            }
+        }
+        private void RelativePowerWorkerLoop(CancellationToken token, int sessionId)
+        {
+            int nWin = Math.Max(16, (int)Math.Round(sampleRate * RelPowerWindowSec));   // 4000
+            int nStep = Math.Max(1, (int)Math.Round(sampleRate * RelPowerStepSec));     // 500
+
+            double[] ring = new double[nWin];
+            int ringPos = 0;
+            int validCount = 0;
+            int stepCounter = 0;
+            long totalSamples = 0;
+
+            while (!token.IsCancellationRequested)
+            {
+                double sample;
+                try
+                {
+                    sample = _powerQueue.Take(token);
+                }
+                catch
+                {
+                    break;
+                }
+
+                ring[ringPos] = sample;
+                ringPos = (ringPos + 1) % nWin;
+
+                if (validCount < nWin) validCount++;
+                totalSamples++;
+                stepCounter++;
+
+                if (validCount < nWin)
+                    continue;
+
+                if (stepCounter < nStep)
+                    continue;
+
+                stepCounter = 0;
+
+                // 取最近4秒窗口
+                double[] window = new double[nWin];
+                int startIdx = ringPos; // ringPos 永远指向“最老位置”
+                for (int i = 0; i < nWin; i++)
+                {
+                    int p = (startIdx + i) % nWin;
+                    window[i] = ring[p];
+                }
+
+                RelativePowers rp = ComputeRelativePowers(window, sampleRate);
+                double t = _powerTimeOffsetSec + totalSamples / sampleRate;
+
+                Dispatcher.BeginInvoke((Action)(() =>
+                {
+                    // 旧会话残留UI消息，直接丢掉
+                    if (sessionId != _powerSessionId) return;
+                    if (deltaRelSeries == null) return;
+
+                    // 只允许X递增，防止SciChart再报乱序
+                    if (t <= _lastPowerXSec) return;
+
+                    deltaRelSeries.Append(t, rp.DeltaPct);
+                    thetaRelSeries.Append(t, rp.ThetaPct);
+                    alphaRelSeries.Append(t, rp.AlphaPct);
+                    betaRelSeries.Append(t, rp.BetaPct);
+
+                    _lastPowerXSec = t;
+
+                    powerSurface.RenderableSeries[0].IsVisible = band_delta.IsChecked == true;
+                    powerSurface.RenderableSeries[1].IsVisible = band_theta.IsChecked == true;
+                    powerSurface.RenderableSeries[2].IsVisible = band_alpha.IsChecked == true;
+                    powerSurface.RenderableSeries[3].IsVisible = band_beta.IsChecked == true;
+
+                    double left = Math.Max(0, t - RelPowerHistorySec);
+                    double right = Math.Max(RelPowerHistorySec, t);
+                    powerSurface.XAxis.VisibleRange = new DoubleRange(left, right);
+                }));
+            }
         }
 
         //tcp开始停止按钮
@@ -259,6 +495,8 @@ namespace Collect.Plot
                 else
                 {
                     StartTimer();
+                    StartRelativePowerWorker();
+                    InitSingleChannelMadDetector(sampleRate);
                     client.EcgEvent += new EcgTCPEventHandler(uav_control_CmdEvent);
                     return true;
                 }
@@ -268,61 +506,14 @@ namespace Collect.Plot
             {
                 client.Stop();
                 StopTimer();
+                StopRelativePowerWorker();
                 client.EcgEvent -= uav_control_CmdEvent;
                 //WriteEdf_Finish_multifile(0);
                 return false;
             }
 
         }
-        public bool Serial_install_ecg(string btn_con, string com)
-        {
-            if (btn_con == "开始")
-            {
-                if (com != null)
-                {
-                    //comboBox_gyroscope1.SelectedItem.ToString()
-                    bool is_open = ecg_control.Start(com);
-                    if (is_open == false)
-                    {
-                        return false;
-                    }
-
-                    else
-                    {
-                        string filePath = "setting.ini";
-                        try
-                        {
-                            using (StreamWriter writer = new StreamWriter(filePath))
-                            {
-                                writer.WriteLine(com);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            LogHelper.WriteErrorLog(ex.Message);
-                            NlogHelper.WriteErrorLog(ex.Message);
-                        }
-                       
-                        return true;
-                    }
-
-
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                ecg_control.Stop();
-        
-
-                WriteEdf_Finish_multifile(0);
-                return false;
-            }
-
-        }
+       
 
         int buffer_index = 0;
         double[][] save_data_buffer = new double[500][];
@@ -362,36 +553,11 @@ namespace Collect.Plot
 
         int buffer_save_index = 0;
         double[][] eeg_data_buffer = new double[8][];
-        short[][] eeg_data_buffer_baseline = new short[8][];
-        double[][] eeg_data_buffer_WaveletDenoise = new double[8][];
+        double[][] eeg_data_buffer_raw = new double[8][];      // 原始显示缓冲
 
-        // 频谱分析相关
-        private PowerSpectralDensityAnalyzer psdAnalyzer;
-        
-        //工频干扰
-        //static double sampleRate = 500;
-        static double notchFreg = 50;
-        static double notchBandwidth = 2;
-
-        //1 计算带照上下腿
-        static double fLow = notchFreg - notchBandwidth;
-        static double fHigh = notchFreg + notchBandwidth;
-
-       
-        static string filename1 = Directory.GetCurrentDirectory();
-        static double hpCut_save = 0.016;
-        static double hpCut_show = 0.5;
-        
-        // 每个通道独立的一对notch（你已有）
-        static double f0 = 50.0;     // 60Hz 电网改成 60
-        static double Q = 35.0;     // 30~40 之间调，Q 越大陷波越窄
         
 
-       
         int index= 0;
-
-
-
 
         /// <summary>
         /// 修改滤波顺序
@@ -402,7 +568,7 @@ namespace Collect.Plot
         public  double sampleRate = 1000;
 
         public double hpCut = 0.3;   // 高通截止 0.5 Hz
-        public  double hpA;
+        //public  double hpA;
 
         public  double lpCut = 40.0;  // 低通截止 50 Hz
         // 4阶 Butterworth 两段二阶的 Q（固定值）
@@ -413,10 +579,12 @@ namespace Collect.Plot
         public double notchQ = 20.0;  // 约等于 BW=2Hz 的量级（可按需要微调）
 
         // ===== 状态（8通道）=====
-        double[] hp1_prevX = new double[8];
-        double[] hp1_prevY = new double[8];
-        double[] hp2_prevX = new double[8];
-        double[] hp2_prevY = new double[8];
+        //double[] hp1_prevX = new double[8];
+        //double[] hp1_prevY = new double[8];
+        //double[] hp2_prevX = new double[8];
+        //double[] hp2_prevY = new double[8];
+        // ✅ 新增
+        BiquadHPF[] hpf;
 
         double[][] medBuf = Enumerable.Range(0, 8).Select(_ => new double[5]).ToArray();
         int[] medCount = new int[8];
@@ -426,21 +594,28 @@ namespace Collect.Plot
         BiquadLPF[] lpf2 ;
         BiquadNotch[] notch1;
         BiquadNotch[] notch2;
+
+       
         public void set_filter_params(double fs)
         {
             sampleRate = fs;
-            hpA = Math.Exp(-2.0 * Math.PI * hpCut / sampleRate);
+            //hpA = Math.Exp(-2.0 * Math.PI * hpCut / sampleRate);
+            hpf = Enumerable.Range(0, 8)
+              .Select(_ => new BiquadHPF(sampleRate, hpCut, 0.7071))
+              .ToArray();
             lpf1 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ1)).ToArray();
             lpf2 = Enumerable.Range(0, 8).Select(_ => new BiquadLPF(sampleRate, lpCut, lpQ2)).ToArray();
+            notch1 = Enumerable.Range(0, 8).Select(_ => new BiquadNotch(sampleRate, notchF0, notchQ)).ToArray();
+            notch2 = Enumerable.Range(0, 8).Select(_ => new BiquadNotch(sampleRate, notchF0, notchQ)).ToArray();
         }
 
         void ResetFilterState(int chCount)
         {
             // 1) 高通状态清零
-            Array.Clear(hp1_prevX, 0, hp1_prevX.Length);
-            Array.Clear(hp1_prevY, 0, hp1_prevY.Length);
-            Array.Clear(hp2_prevX, 0, hp2_prevX.Length);
-            Array.Clear(hp2_prevY, 0, hp2_prevY.Length);
+            //Array.Clear(hp1_prevX, 0, hp1_prevX.Length);
+            //Array.Clear(hp1_prevY, 0, hp1_prevY.Length);
+            //Array.Clear(hp2_prevX, 0, hp2_prevX.Length);
+            //Array.Clear(hp2_prevY, 0, hp2_prevY.Length);
 
             // 2) 中值滤波状态清零
             for (int ch = 0; ch < chCount; ch++)
@@ -450,8 +625,7 @@ namespace Collect.Plot
                 medIdx[ch] = 0;
             }
 
-            notch1 = Enumerable.Range(0, 8).Select(_ => new BiquadNotch(sampleRate, notchF0, notchQ)).ToArray();
-            notch2 = Enumerable.Range(0, 8).Select(_ => new BiquadNotch(sampleRate, notchF0, notchQ)).ToArray();
+            
         }
         double Median5_Update(int ch, double x)
         {
@@ -475,145 +649,269 @@ namespace Collect.Plot
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private SeizureDetector _detector;
-        private BandPowerRatioDetector _stage2;
-        public void InitAfterFsKnown(double fs)
+   
+        private SingleChannelMadSeizureDetector _madDetector;
+        private bool _madDetectorInited = false;
+
+        // 这两个阈值要换成你离线标定出来的真实值
+        public double MadThreshold1 = 120.0;
+        public double MadThreshold2 = 220.0;
+
+        // 模式1 / 模式2 对应的刺激持续时间（单位 ms）
+        public double MadShortStimMs = 200.0;
+        public double MadLongStimMs = 500.0; 
+        private void InitSingleChannelMadDetector(double fs)
         {
-            // Stage1
-            _detector = new SeizureDetector(new SeizureDetector.Config
+            _madDetector = new SingleChannelMadSeizureDetector(
+                new SingleChannelMadSeizureDetector.Config
+                {
+                    Fs = fs,
+                    WindowMs = 500,
+                    StepMs = 250,
+                    WarmupMs = 1000,         // 启动后前1秒不检测，可改成0
+                    MadThreshold1 = MadThreshold1,
+                    MadThreshold2 = MadThreshold2,
+                    ShortStimMs = MadShortStimMs,
+                    LongStimMs = MadLongStimMs
+                });
+
+            _madDetector.OnWindowEvaluated += (s, e) =>
             {
-                Fs = sampleRate,
-                ChannelCount = 8, //通道数
-                WindowMs = 200, //第一检测区窗口大小
-                StepMs = 50,//第一检测区步数
-                WarmupMs = 1000,//前1s热身
-                LlMin = LLMin,//LL最小值
-                LlMax = LLMax,//LL最大值
-                RmsMin = RMSMin,//RMS最小值
-                RmsMax = RMSMax,//RMS最大值
-                //RmsThreshold = 80,//RMS阈值
-                //LlThreshold = 2000,//LL阈值
-                MinChannelsToTrigger = 1,//最小触发通道数
-                StopAfterTrigger = false,//触发后是否停止检测
-
-                Stage2LookbackMs = 400, // 向前 400ms
-                Stage2WindowMs = 600,   // 总窗口 600ms
-                HistoryMs = 2000,       // 历史缓冲 2s
-                Stage2EmitMinIntervalMs = 100// 最小间隔 100ms
-            });
-            _detector.Start();
-
-            // Stage2
-            _stage2 = new BandPowerRatioDetector(new BandPowerRatioDetector.Config
-            {
-                Fs = sampleRate,
-                ChannelCount = 8,
-
-                AlphaRelativeThreshold = Alpha,//带功率比阈值
-                MinChannelsToTrigger = 2
-            });
-            _stage2.Start();
-
-            // 关键：Stage1 命中后，把 600ms 数据块送入 Stage2 队列（Stage2 自己线程算）
-            _detector.OnStage2WindowReady += (s, e) =>
-            {
-                _stage2.PushWindow(e.Window,e.ChannelIndices, e.WindowStartSample, e.WindowEndSample);
+                // 这里只做日志，不做UI重操作
+                // 你调试时打开，正式跑可以关掉
+                // NlogHelper.WriteInfoLog(
+                //     $"MAD窗: [{e.WindowStartSample},{e.WindowEndSample}] " +
+                //     $"MAD={e.Mad:F3}, 超阈1={e.AboveThreshold1}, 连续计数={e.ConsecutiveAboveCount}");
             };
 
-            // Stage2 触发事件（注意：这是在 Stage2 线程里触发，UI要Dispatcher）
-            _stage2.OnStage2Triggered += (s, e) =>
+            _madDetector.OnSeizureTriggered += (s, e) =>
             {
-                if (e.TriggerMode == 1)
+                
+
+                if (e.Mode == 1)
                 {
                     client.EnqueueMode1Cmd();
-                    NlogHelper.WriteInfoLog("触发模式1");
-                    // 模式1：本次超阈值通道集合
-                    // e.TriggeredOriginalChannels 里就是原始通道号(0..7)
+                    NlogHelper.WriteInfoLog("闭环触发模式1");
                 }
-                else if (e.TriggerMode == 2)
+                else
                 {
                     client.EnqueueMode2Cmd();
-                    NlogHelper.WriteInfoLog("触发模式2");
-                    // 模式2：与上次模式1那组通道一一对应
-                    // e.TriggeredOriginalChannels[i] 对应：
-                    //   e.PreviousAlphaRelative[i] -> 上次(模式1基准)
-                    //   e.TriggeredAlphaRelative[i] -> 本次
+                    NlogHelper.WriteInfoLog("闭环触发模式2");
                 }
             };
 
+            _madDetector.Start();
         }
-        private bool _detectorInited = false;
+        
+        public bool clear_peak_flag = false;
+        private volatile bool _showRawData = false;
+        private volatile bool _isClosedLoopMode = false;
+        private int NextPowerOfTwo(int n)
+        {
+            int p = 1;
+            while (p < n) p <<= 1;
+            return p;
+        }
+
+        private void FFTInPlace(Complex[] buffer)
+        {
+            int n = buffer.Length;
+
+            int j = 0;
+            for (int i = 1; i < n; i++)
+            {
+                int bit = n >> 1;
+                while ((j & bit) != 0)
+                {
+                    j ^= bit;
+                    bit >>= 1;
+                }
+                j ^= bit;
+
+                if (i < j)
+                {
+                    Complex temp = buffer[i];
+                    buffer[i] = buffer[j];
+                    buffer[j] = temp;
+                }
+            }
+
+            for (int len = 2; len <= n; len <<= 1)
+            {
+                double ang = -2.0 * Math.PI / len;
+                Complex wlen = new Complex(Math.Cos(ang), Math.Sin(ang));
+
+                for (int i = 0; i < n; i += len)
+                {
+                    Complex w = Complex.One;
+                    int half = len >> 1;
+
+                    for (int k = 0; k < half; k++)
+                    {
+                        Complex u = buffer[i + k];
+                        Complex v = buffer[i + k + half] * w;
+
+                        buffer[i + k] = u + v;
+                        buffer[i + k + half] = u - v;
+
+                        w *= wlen;
+                    }
+                }
+            }
+        }
+        private RelativePowers ComputeRelativePowers(double[] segment, double fs)
+        {
+            int n0 = segment.Length;
+            int n = NextPowerOfTwo(n0);
+
+            Complex[] x = new Complex[n];
+
+            double mean = segment.Average();
+            double sumW2 = 0.0;
+
+            for (int i = 0; i < n0; i++)
+            {
+                double w = 0.5 - 0.5 * Math.Cos(2.0 * Math.PI * i / (n0 - 1)); // Hann窗
+                double v = (segment[i] - mean) * w;
+                x[i] = new Complex(v, 0);
+                sumW2 += w * w;
+            }
+
+            for (int i = n0; i < n; i++)
+                x[i] = Complex.Zero;
+
+            FFTInPlace(x);
+
+            double df = fs / n;
+
+            double delta = 0.0;
+            double theta = 0.0;
+            double alpha = 0.0;
+            double beta = 0.0;
+
+            for (int k = 0; k <= n / 2; k++)
+            {
+                double f = k * df;
+                double pxx = x[k].Magnitude * x[k].Magnitude / (fs * sumW2);
+
+                if (k > 0 && k < n / 2)
+                    pxx *= 2.0;
+
+                double area = pxx * df;
+
+                if (f >= 0.5 && f < 4.0) delta += area;
+                else if (f >= 4.0 && f < 8.0) theta += area;
+                else if (f >= 8.0 && f < 13.0) alpha += area;
+                else if (f >= 13.0 && f < 30.0) beta += area;
+            }
+
+            double total = delta + theta + alpha + beta;
+
+            if (total <= 1e-12)
+            {
+                return new RelativePowers
+                {
+                    DeltaPct = 0,
+                    ThetaPct = 0,
+                    AlphaPct = 0,
+                    BetaPct = 0
+                };
+            }
+
+            return new RelativePowers
+            {
+                DeltaPct = delta / total * 100.0,
+                ThetaPct = theta / total * 100.0,
+                AlphaPct = alpha / total * 100.0,
+                BetaPct = beta / total * 100.0
+            };
+        }
         void uav_control_CmdEvent(object sender, EcgTCPEventArgs e)
         {
-           
             Numeeg += 33;
             //33数据包版本
             Buffer.BlockCopy(e.value, 2, eeg_data_byte, 0, 24);
 
             process_eegdata(eeg_data_byte);
-            if (!_detectorInited)
+
+            if (_isClosedLoopMode && !_madDetectorInited)
             {
-                double fs = sampleRate; // 或从数据包/设备配置解析
-                InitAfterFsKnown(fs);
-                _detectorInited = true;
-            }
-            // 推给检测线程：原始 8通道（μV）
-            if (_detector != null)
-            {
-                double[] frame = new double[8];
-                for (int ch = 0; ch < 8; ch++)
-                    frame[ch] = eeg_data_float[ch];   // 或者用你滤波后的 filterdata（更稳）
-                _detector.PushFrame(frame);
+                InitSingleChannelMadDetector(sampleRate);
+                _madDetectorInited = true;
             }
             index++;
+            int curIdx = buffer_index;
+
             for (int i = 0; i < 8; i++)
             {
-                double temp = (Convert.ToDouble(eeg_data_float[i]));
+                double temp = Convert.ToDouble(eeg_data_float[i]);
 
-              
+                double peakdata;
+                if (clear_peak_flag)
+                    peakdata = Median5_Update(i, temp);
+                else
+                    peakdata = temp;
+
                 // --- 第1级 一阶高通：去基线漂移 ---
-                double yhp1 = hpA * (hp1_prevY[i] + temp - hp1_prevX[i]);
-                hp1_prevX[i] = temp;
-                hp1_prevY[i] = yhp1;
+                //double yhp1 = hpA * (hp1_prevY[i] + peakdata - hp1_prevX[i]);
+                //hp1_prevX[i] = peakdata;
+                //hp1_prevY[i] = yhp1;
 
-                // --- 第2级 一阶高通：进一步增强滚降 ---
-                double yhp2 = hpA * (hp2_prevY[i] + yhp1 - hp2_prevX[i]);
-                hp2_prevX[i] = yhp1;
-                hp2_prevY[i] = yhp2;
+                //// --- 第2级 一阶高通：进一步增强滚降 ---
+                //double yhp2 = hpA * (hp2_prevY[i] + yhp1 - hp2_prevX[i]);
+                //hp2_prevX[i] = yhp1;
+                //hp2_prevY[i] = yhp2;
+                double yhp = hpf[i].Process(peakdata);
 
-
-
-                // --- 50 Hz 双级陷波1级 ---
-                double y1 = notch1[i].Process(yhp2);
+                // --- 50 Hz 双级陷波 ---
+                double y1 = notch1[i].Process(yhp);
                 double y2 = notch2[i].Process(y1);
 
-                //带通
+                // --- 低通 ---
                 double ylp1 = lpf1[i].Process(y2);
                 double ylp2 = lpf2[i].Process(ylp1);
 
-                double filterdata = Median5_Update(i, ylp2);
-                
-                
-                eeg_data_buffer[i][buffer_index] = filterdata;
-                
+                double filterdata = ylp2;
 
+                // 两份显示缓冲
+                eeg_data_buffer_raw[i][curIdx] = temp;        // 原始数据
+                eeg_data_buffer[i][curIdx] = filterdata;      // 滤波数据
+
+                // 检测继续使用滤波后的数据
+                if (_isClosedLoopMode && i == 0 && _madDetector != null)
+                {
+                    _madDetector.PushSample(filterdata);
+                }
+                if (i == _powerChannelIndex && _powerQueue != null)
+                {
+                    _powerQueue.TryAdd(filterdata);
+                }
+                // 保存逻辑
                 if (index >= 1000)
                 {
                     index = 1002;
                     save_data_buffer[buffer_save_index][i] = filterdata;
-                    save_data_buffer_original[buffer_save_index][i] = yhp1;
+
+                    // 真正原始数据建议保存 temp，不要再写 yhp1
+                    save_data_buffer_original[buffer_save_index][i] = yhp;
                 }
             }
 
-            buffer_index++;
-            buffer_save_index++;
-            buffer_index %= BaoLength;
+            // 根据当前显示模式追加曲线
+            bool showRaw = _showRawData;
 
             for (int i = 0; i < 8; i++)
             {
-                lineData[i].Append(g_index, eeg_data_buffer[i][buffer_index] - i * 10000);
+                double showValue = showRaw ? eeg_data_buffer_raw[i][curIdx]
+                                           : eeg_data_buffer[i][curIdx];
+
+                lineData[i].Append(g_index, showValue - i * 10000);
             }
-            g_index += 0.002;
+
+            buffer_index = (buffer_index + 1) % BaoLength;
+            buffer_save_index++;
+            buffer_save_index %= 500;
+            g_index += 0.001;
 
             buffer_save_index %= 500;
             if (index >= 1000)
@@ -631,8 +929,11 @@ namespace Collect.Plot
                         Array.Copy(save_data_buffer_original[i], copiedBuffer_original[i], 8);
                     }
 
-                    save_data_buffer_all.Add(copiedBuffer);
-                    save_data_buffer_all_original.Add(copiedBuffer_original);
+                    lock (_saveBufferLock)
+                    {
+                        save_data_buffer_all.Add(copiedBuffer);
+                        save_data_buffer_all_original.Add(copiedBuffer_original);
+                    }
                     // 原始 buffer 重置
                     save_data_buffer = new double[500][];
                     save_data_buffer_original = new double[500][];
@@ -645,23 +946,19 @@ namespace Collect.Plot
                 }
             }
             //当前数据点与上次更新的数据差大于4x500个数据点或者当前数据少于WindowSizex500
-            if (Convert.ToInt32(g_index) - g_old_ecg_time > 4 || Convert.ToInt32(g_index) < WindowSize)
+            if (Convert.ToInt32(g_index) - g_old_ecg_time > 2 || Convert.ToInt32(g_index) < WindowSize)
             {
                 g_old_ecg_time = Convert.ToInt32(g_index);
 
                 if (Convert.ToInt32(g_index) < WindowSize)
                 {
-                    g_old_ecg_time = Convert.ToInt32(WindowSize - 5);
+                    g_old_ecg_time = Convert.ToInt32(WindowSize - 3);
                 }
                 this.Dispatcher.BeginInvoke((Action)delegate ()
                 {
                     sciChartSurface.XAxis.VisibleRange = ComputeXAxisRange(g_old_ecg_time);
                 });
             }
-            this.Dispatcher.BeginInvoke((Action)delegate ()
-            {
-                NumEEG.Text = Numeeg.ToString();
-            });
         }
        
         int Numeeg = 0;
@@ -745,186 +1042,64 @@ namespace Collect.Plot
         {
             sciChartSurface.RenderableSeries[7].IsVisible = false;
         }
-        public void button_save_ecg_filter_ns2()
+       
+        public async Task button_save_ecg_filter_ns2()
         {
+            if (_isSaving)
+            {
+                MessageBox.Show("当前已有保存任务在进行，请稍后再试。");
+                return;
+            }
+
             SaveFileDialog saveFileDialog = new SaveFileDialog();
             saveFileDialog.Title = "保存文件";
-            string date = "Record-" + DateTime.Now.ToString("yyyyMMdd-HH时mm分ss秒");
+            string date = "Record-filter-" + DateTime.Now.ToString("yyyyMMdd-HH时mm分ss秒");
             saveFileDialog.FileName = date + ".ns2";
             saveFileDialog.DefaultExt = "ns2";
             saveFileDialog.Filter = "NS2 文件 (*.ns2)|*.ns2|所有文件 (*.*)|*.*";
 
-            if (saveFileDialog.ShowDialog() == true)
+            if (saveFileDialog.ShowDialog() != true)
+                return;
+
+            string filePath = saveFileDialog.FileName;
+
+            List<double[][]> snapshot = SnapshotFilteredBlocks();
+            if (snapshot.Count == 0)
             {
-                string filePath = saveFileDialog.FileName;
+                MessageBox.Show("当前没有可保存的滤波数据。");
+                return;
+            }
 
-                try
-                {
-                    using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write))
-                    using (var writer = new BinaryWriter(fs))
-                    {
-                        const int channelCount = 8;
-                        const int samplingRate = 1000;
-                        const int timeResolution = 30000;
-                        const double quantization = 22.35e-9; // 量化步长 nV/bit
-                        const short minAnalog = -1000;
-                        const short maxAnalog = 1000;
+            _isSaving = true;
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
 
-                        // --- 1. 写入 FileTypeID ---
-                        writer.Write(Encoding.ASCII.GetBytes("NEURALCD")); // 8 bytes
-
-                        // --- 2. FileSpec ---
-                        writer.Write((byte)2); // major
-                        writer.Write((byte)3); // minor
-
-                        // --- 3. HeaderBytes (placeholder, update later) ---
-                        long headerPos = writer.BaseStream.Position;
-                        writer.Write((uint)0); // placeholder
-
-                        // --- 4. Sampling label (16 bytes) ---
-                        writer.Write(Encoding.ASCII.GetBytes("EEG DATA".PadRight(16, '\0')));
-
-                        // --- 5. Comment (256 bytes) ---
-                        writer.Write(Encoding.ASCII.GetBytes("Created by EEG acquisition system".PadRight(256, '\0')));
-
-                        // --- 6. Period & TimeRes ---
-                        writer.Write((uint)(timeResolution / samplingRate)); // Period
-                        writer.Write((uint)timeResolution); // TimeRes
-
-                        // --- 7. DateTime (8×uint16 = 16 bytes) ---
-                        DateTime now = DateTime.Now;
-                        writer.Write((ushort)now.Year);
-                        writer.Write((ushort)now.Month);
-                        writer.Write((ushort)now.Day);
-                        writer.Write((ushort)now.Hour);
-                        writer.Write((ushort)now.Minute);
-                        writer.Write((ushort)now.Second);
-                        writer.Write((ushort)0);
-                        writer.Write((ushort)0);
-
-                        // --- 8. Channel count ---
-                        writer.Write((uint)channelCount);
-
-                        // --- 9. 扩展头部 (每个通道66字节) ---
-                        for (int ch = 0; ch < channelCount; ch++)
-                        {
-                            writer.Write(Encoding.ASCII.GetBytes("CC"));        // 2 bytes
-                            writer.Write((ushort)(ch + 1));                     // Electrode ID
-                            writer.Write(Encoding.ASCII.GetBytes($"CH{ch + 1}".PadRight(16, '\0'))); // Label
-                            writer.Write((byte)('A' + ch / 32));                // ConnectorBank
-                            writer.Write((byte)(ch % 32));                      // ConnectorPin
-                            writer.Write((short)-32768);                        // MinDigiValue
-                            writer.Write((short)32767);                         // MaxDigiValue
-                            writer.Write((short)minAnalog);                     // MinAnalogValue
-                            writer.Write((short)maxAnalog);                     // MaxAnalogValue
-                            writer.Write(Encoding.ASCII.GetBytes("uV".PadRight(16, '\0'))); // AnalogUnits
-                            writer.Write((uint)0);                              // HighFreqCorner
-                            writer.Write((uint)0);                              // HighFreqOrder
-                            writer.Write((ushort)0);                            // HighFilterType
-                            writer.Write((uint)0);                              // LowFreqCorner
-                            writer.Write((uint)0);                              // LowFreqOrder
-                            writer.Write((ushort)0);                            // LowFilterType
-                        }
-
-                        // --- 10. 更新 HeaderBytes ---
-                        long headerEnd = writer.BaseStream.Position;
-                        writer.Seek((int)headerPos, SeekOrigin.Begin);
-                        writer.Write((uint)headerEnd);
-                        writer.Seek((int)headerEnd, SeekOrigin.Begin);
-
-                        // --- 11. 数据包头 (标记 + 时间戳 + 数据点数) ---
-                        writer.Write((byte)1);       // 标记
-                        writer.Write((uint)0);       // 时间戳
-                        uint totalSamples = 0;
-                        foreach (var buf in save_data_buffer_all)
-                            totalSamples += (uint)buf.Length;
-                        writer.Write(totalSamples);  // DataPoints
-
-                        // --- 12. 写入数据 (int16 格式) ---
-                        foreach (var buf in save_data_buffer_all)
-                        {
-                            foreach (var row in buf)
-                            {
-                                for (int ch = 0; ch < channelCount; ch++)
-                                {
-                                    // 假设输入为 μV
-                                    int val = (int)row[ch];
-                                    if (val > short.MaxValue) val = short.MaxValue;
-                                    else if (val < short.MinValue) val = short.MinValue;
-                                    writer.Write((short)val);
-                                }
-                            }
-                        }
-                    }
-
-                 
-                }
-                catch (Exception ex)
-                {
-                    System.Windows.MessageBox.Show($"保存 NS2 文件时出错: {ex.Message}");
-                }
+            try
+            {
+                await Task.Run(() => SaveNs2Blocks(filePath, snapshot));
+                MessageBox.Show("滤波后 NS2 文件保存成功。");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存滤波后 NS2 文件时出错: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                _isSaving = false;
             }
         }
 
-        //public void button_save_ecg_filter_excel()
-        //{
-        //    SaveFileDialog saveFileDialog = new SaveFileDialog();
-        //    saveFileDialog.Title = "保存文件";
-        //    string date = "Record-" + DateTime.Now.Year.ToString("0000") + DateTime.Now.Month.ToString("00") + DateTime.Now.Day.ToString("00") + "-" + DateTime.Now.Hour.ToString("00") + "时" + DateTime.Now.Minute.ToString("00") + "分" + DateTime.Now.Second.ToString("00") + "秒";
-        //    saveFileDialog.FileName = date + ".xlsx";
-        //    saveFileDialog.DefaultExt = "xlsx";
-        //    saveFileDialog.Filter = "Excel 文件 (*.xlsx)|*.xlsx|所有文件 (*.*)|*.*";
 
-        //    if (saveFileDialog.ShowDialog() == true)
-        //    {
-        //        string filePath = saveFileDialog.FileName;
-        //        ExcelPackage.License.SetNonCommercialOrganization("My Noncommercial organization");
-
-        //        using (var package = new ExcelPackage(filePath))
-        //        {
-        //            var worksheet = package.Workbook.Worksheets.Add("EEG Data");
-
-
-        //            // 计算总数据行数
-        //            int totalDataPoints = save_data_buffer_all.Sum(buffer => buffer.Length);
-        //            var allData = new object[totalDataPoints + 1][]; // +1 用于标题行
-
-        //            // 设置标题行
-        //            allData[0] = new object[] { "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7", "Ch8" };
-
-        //            int dataIndex = 1;
-
-        //            // 合并所有缓冲区的数据
-        //            for (int bufferIndex = 0; bufferIndex < save_data_buffer_all.Count; bufferIndex++)
-        //            {
-        //                var buffer = save_data_buffer_all[bufferIndex];
-        //                int dataPointCount = buffer.Length;
-        //                int channelCount = buffer[0].Length;
-
-        //                for (int dataPoint = 0; dataPoint < dataPointCount; dataPoint++)
-        //                {
-        //                    allData[dataIndex] = new object[channelCount];
-        //                    for (int channel = 0; channel < channelCount; channel++)
-        //                    {
-        //                        allData[dataIndex][channel] = buffer[dataPoint][channel];
-        //                    }
-        //                    dataIndex++;
-        //                }
-        //            }
-
-        //            // 一次性写入所有数据
-        //            worksheet.Cells[1, 1].LoadFromArrays(allData);
-        //            package.Save();
-
-        //        }
-        //        LogHelper.WriteInfoLog("文本数据保存成功");
-        //        NlogHelper.WriteInfoLog("文本数据保存成功");
-        //    }
-        //}
         private const int EXCEL_MAX_ROWS = 1000000; // Excel 单个 Sheet 最大行数
         private const int EXCEL_HEADER_ROWS = 1;   // 表头占 1 行
-        public void button_save_ecg_filter_excel()
+        public async Task button_save_ecg_filter_excel()
         {
+            if (_isSaving)
+            {
+                MessageBox.Show("当前已有保存任务在进行，请稍后再试。");
+                return;
+            }
+
             SaveFileDialog saveFileDialog = new SaveFileDialog();
             saveFileDialog.Title = "保存文件";
             string date = "Record-" + DateTime.Now.ToString("yyyyMMdd-HH时mm分ss秒");
@@ -936,242 +1111,89 @@ namespace Collect.Plot
                 return;
 
             string filePath = saveFileDialog.FileName;
-            ExcelPackage.License.SetNonCommercialOrganization("My Noncommercial organization");
 
-            using (var package = new ExcelPackage(new FileInfo(filePath)))
+            List<double[][]> snapshot = SnapshotFilteredBlocks();
+            if (snapshot.Count == 0)
             {
-                int sheetIndex = 1;
-                int currentRow = 1;
-
-                // 创建第一个 Sheet
-                ExcelWorksheet worksheet = CreateNewSheet(package, sheetIndex, ref currentRow);
-
-                // 遍历所有 EEG 数据缓冲
-                foreach (var buffer in save_data_buffer_all)
-                {
-                    for (int i = 0; i < buffer.Length; i++)
-                    {
-                        // 如果当前 Sheet 行数即将超过上限，创建新 Sheet
-                        if (currentRow > EXCEL_MAX_ROWS)
-                        {
-                            sheetIndex++;
-                            worksheet = CreateNewSheet(package, sheetIndex, ref currentRow);
-                        }
-                        worksheet.Cells[currentRow, 1].LoadFromArrays(new[]
-                        {
-                            buffer[i].Cast<object>().ToArray()
-                        });
-                        //// 将 EEG 数据转换为整数（保留整数部分）
-                        //var intData = buffer[i].Select(value => (int)Math.Floor(value)).ToArray();
-
-                        //// 写一行整数类型的 EEG 数据（8 通道）
-                        //worksheet.Cells[currentRow, 1].LoadFromArrays(new object[][] { intData.Cast<object>().ToArray() });
-
-                        currentRow++;
-                    }
-                }
-
-                package.Save();
+                MessageBox.Show("当前没有可保存的滤波数据。");
+                return;
             }
 
-            LogHelper.WriteInfoLog("Excel 数据保存成功（自动拆分 Sheet）");
-            NlogHelper.WriteInfoLog("Excel 数据保存成功（自动拆分 Sheet）");
-        }
-        private ExcelWorksheet CreateNewSheet(ExcelPackage package, int sheetIndex, ref int currentRow)
-        {
-            string sheetName = $"EEG_Data_{sheetIndex}";
-            var worksheet = package.Workbook.Worksheets.Add(sheetName);
+            _isSaving = true;
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
 
-            // 写表头
-            worksheet.Cells[1, 1].LoadFromArrays(new[]
+            try
             {
-                new object[] { "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7", "Ch8" }
-            });
-
-            currentRow = EXCEL_HEADER_ROWS + 1; // 数据从第 2 行开始
-            return worksheet;
+                await Task.Run(() => SaveExcelBlocks(filePath, snapshot, "EEG_Data"));
+                LogHelper.WriteInfoLog("Excel 数据保存成功（自动拆分 Sheet）");
+                NlogHelper.WriteInfoLog("Excel 数据保存成功（自动拆分 Sheet）");
+                MessageBox.Show("滤波后 Excel 文件保存成功。");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存滤波后 Excel 文件时出错: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                _isSaving = false;
+            }
         }
-        public void button_save_ecg_original_ns2()
+       
+        public async Task button_save_ecg_original_ns2()
         {
+            if (_isSaving)
+            {
+                MessageBox.Show("当前已有保存任务在进行，请稍后再试。");
+                return;
+            }
+
             SaveFileDialog saveFileDialog = new SaveFileDialog();
             saveFileDialog.Title = "保存文件";
-            string date = "Record-original" + DateTime.Now.ToString("yyyyMMdd-HH时mm分ss秒");
+            string date = "Record-original-" + DateTime.Now.ToString("yyyyMMdd-HH时mm分ss秒");
             saveFileDialog.FileName = date + ".ns2";
             saveFileDialog.DefaultExt = "ns2";
             saveFileDialog.Filter = "NS2 文件 (*.ns2)|*.ns2|所有文件 (*.*)|*.*";
 
-            if (saveFileDialog.ShowDialog() == true)
+            if (saveFileDialog.ShowDialog() != true)
+                return;
+
+            string filePath = saveFileDialog.FileName;
+
+            List<double[][]> snapshot = SnapshotOriginalBlocks();
+            if (snapshot.Count == 0)
             {
-                string filePath = saveFileDialog.FileName;
+                MessageBox.Show("当前没有可保存的原始数据。");
+                return;
+            }
 
-                try
-                {
-                    using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write))
-                    using (var writer = new BinaryWriter(fs))
-                    {
-                        const int channelCount = 8;
-                        const int samplingRate = 1000;
-                        const int timeResolution = 30000;
-                        const double quantization = 22.35e-9; // 量化步长 nV/bit
-                        const short minAnalog = -1000;
-                        const short maxAnalog = 1000;
+            _isSaving = true;
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
 
-                        // --- 1. 写入 FileTypeID ---
-                        writer.Write(Encoding.ASCII.GetBytes("NEURALCD")); // 8 bytes
-
-                        // --- 2. FileSpec ---
-                        writer.Write((byte)2); // major
-                        writer.Write((byte)3); // minor
-
-                        // --- 3. HeaderBytes (placeholder, update later) ---
-                        long headerPos = writer.BaseStream.Position;
-                        writer.Write((uint)0); // placeholder
-
-                        // --- 4. Sampling label (16 bytes) ---
-                        writer.Write(Encoding.ASCII.GetBytes("EEG DATA".PadRight(16, '\0')));
-
-                        // --- 5. Comment (256 bytes) ---
-                        writer.Write(Encoding.ASCII.GetBytes("Created by EEG acquisition system".PadRight(256, '\0')));
-
-                        // --- 6. Period & TimeRes ---
-                        writer.Write((uint)(timeResolution / samplingRate)); // Period
-                        writer.Write((uint)timeResolution); // TimeRes
-
-                        // --- 7. DateTime (8×uint16 = 16 bytes) ---
-                        DateTime now = DateTime.Now;
-                        writer.Write((ushort)now.Year);
-                        writer.Write((ushort)now.Month);
-                        writer.Write((ushort)now.Day);
-                        writer.Write((ushort)now.Hour);
-                        writer.Write((ushort)now.Minute);
-                        writer.Write((ushort)now.Second);
-                        writer.Write((ushort)0);
-                        writer.Write((ushort)0);
-
-                        // --- 8. Channel count ---
-                        writer.Write((uint)channelCount);
-
-                        // --- 9. 扩展头部 (每个通道66字节) ---
-                        for (int ch = 0; ch < channelCount; ch++)
-                        {
-                            writer.Write(Encoding.ASCII.GetBytes("CC"));        // 2 bytes
-                            writer.Write((ushort)(ch + 1));                     // Electrode ID
-                            writer.Write(Encoding.ASCII.GetBytes($"CH{ch + 1}".PadRight(16, '\0'))); // Label
-                            writer.Write((byte)('A' + ch / 32));                // ConnectorBank
-                            writer.Write((byte)(ch % 32));                      // ConnectorPin
-                            writer.Write((short)-32768);                        // MinDigiValue
-                            writer.Write((short)32767);                         // MaxDigiValue
-                            writer.Write((short)minAnalog);                     // MinAnalogValue
-                            writer.Write((short)maxAnalog);                     // MaxAnalogValue
-                            writer.Write(Encoding.ASCII.GetBytes("uV".PadRight(16, '\0'))); // AnalogUnits
-                            writer.Write((uint)0);                              // HighFreqCorner
-                            writer.Write((uint)0);                              // HighFreqOrder
-                            writer.Write((ushort)0);                            // HighFilterType
-                            writer.Write((uint)0);                              // LowFreqCorner
-                            writer.Write((uint)0);                              // LowFreqOrder
-                            writer.Write((ushort)0);                            // LowFilterType
-                        }
-
-                        // --- 10. 更新 HeaderBytes ---
-                        long headerEnd = writer.BaseStream.Position;
-                        writer.Seek((int)headerPos, SeekOrigin.Begin);
-                        writer.Write((uint)headerEnd);
-                        writer.Seek((int)headerEnd, SeekOrigin.Begin);
-
-                        // --- 11. 数据包头 (标记 + 时间戳 + 数据点数) ---
-                        writer.Write((byte)1);       // 标记
-                        writer.Write((uint)0);       // 时间戳
-                        uint totalSamples = 0;
-                        foreach (var buf in save_data_buffer_all_original)
-                            totalSamples += (uint)buf.Length;
-                        writer.Write(totalSamples);  // DataPoints
-
-                        // --- 12. 写入数据 (int16 格式) ---
-                        foreach (var buf in save_data_buffer_all_original)
-                        {
-                            foreach (var row in buf)
-                            {
-                                for (int ch = 0; ch < channelCount; ch++)
-                                {
-                                    // 假设输入为 μV
-                                    int val = (int)row[ch];
-                                    if (val > short.MaxValue) val = short.MaxValue;
-                                    else if (val < short.MinValue) val = short.MinValue;
-                                    writer.Write((short)val);
-                                }
-                            }
-                        }
-                    }
-
-                    System.Windows.MessageBox.Show("NS2 文件保存成功，可在 MATLAB 用 openNSx 打开。");
-                }
-                catch (Exception ex)
-                {
-                    System.Windows.MessageBox.Show($"保存 NS2 文件时出错: {ex.Message}");
-                }
+            try
+            {
+                await Task.Run(() => SaveNs2Blocks(filePath, snapshot));
+                MessageBox.Show("原始 NS2 文件保存成功，可在 MATLAB 用 openNSx 打开。");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存原始 NS2 文件时出错: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                _isSaving = false;
             }
         }
 
-        //public void button_save_ecg_original_excel()
-        //{
-        //    SaveFileDialog saveFileDialog = new SaveFileDialog();
-        //    saveFileDialog.Title = "保存文件";
-        //    string date = "Record-original-" + DateTime.Now.Year.ToString("0000") + DateTime.Now.Month.ToString("00") + DateTime.Now.Day.ToString("00") + "-" + DateTime.Now.Hour.ToString("00") + "时" + DateTime.Now.Minute.ToString("00") + "分" + DateTime.Now.Second.ToString("00") + "秒";
-        //    saveFileDialog.FileName = date + ".xlsx";
-        //    saveFileDialog.DefaultExt = "xlsx";
-        //    saveFileDialog.Filter = "Excel 文件 (*.xlsx)|*.xlsx|所有文件 (*.*)|*.*";
-
-        //    if (saveFileDialog.ShowDialog() == true)
-        //    {
-        //        string filePath = saveFileDialog.FileName;
-        //        ExcelPackage.License.SetNonCommercialOrganization("My Noncommercial organization");
-
-        //        using (var package = new ExcelPackage(filePath))
-        //        {
-        //            var worksheet = package.Workbook.Worksheets.Add("EEG Data");
-
-
-        //            // 计算总数据行数
-        //            int totalDataPoints = save_data_buffer_all_original.Sum(buffer => buffer.Length);
-        //            var allData = new object[totalDataPoints + 1][]; // +1 用于标题行
-
-        //            // 设置标题行
-        //            allData[0] = new object[] { "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7", "Ch8" };
-
-        //            int dataIndex = 1;
-
-        //            // 合并所有缓冲区的数据
-        //            for (int bufferIndex = 0; bufferIndex < save_data_buffer_all_original.Count; bufferIndex++)
-        //            {
-        //                var buffer = save_data_buffer_all_original[bufferIndex];
-        //                int dataPointCount = buffer.Length;
-        //                int channelCount = buffer[0].Length;
-
-        //                for (int dataPoint = 0; dataPoint < dataPointCount; dataPoint++)
-        //                {
-        //                    allData[dataIndex] = new object[channelCount];
-        //                    for (int channel = 0; channel < channelCount; channel++)
-        //                    {
-        //                        allData[dataIndex][channel] = buffer[dataPoint][channel];
-        //                    }
-        //                    dataIndex++;
-        //                }
-        //            }
-
-        //            // 一次性写入所有数据
-        //            worksheet.Cells[1, 1].LoadFromArrays(allData);
-        //            package.Save();
-        //        }
-
-        //        LogHelper.WriteInfoLog("文本数据保存成功");
-        //        NlogHelper.WriteInfoLog("文本数据保存成功");
-
-
-        //    }
-
-        //}
-        public void button_save_ecg_original_excel()
+        public async Task button_save_ecg_original_excel()
         {
+            if (_isSaving)
+            {
+                MessageBox.Show("当前已有保存任务在进行，请稍后再试。");
+                return;
+            }
+
             SaveFileDialog saveFileDialog = new SaveFileDialog();
             saveFileDialog.Title = "保存文件";
             string date = "Record-original-" + DateTime.Now.ToString("yyyyMMdd-HH时mm分ss秒");
@@ -1183,63 +1205,35 @@ namespace Collect.Plot
                 return;
 
             string filePath = saveFileDialog.FileName;
-            ExcelPackage.License.SetNonCommercialOrganization("My Noncommercial organization");
 
-            using (var package = new ExcelPackage(new FileInfo(filePath)))
+            List<double[][]> snapshot = SnapshotOriginalBlocks();
+            if (snapshot.Count == 0)
             {
-                int sheetIndex = 1;
-                int currentRow = 1;
-
-                // 创建第一个 Sheet
-                ExcelWorksheet worksheet = CreateNewOriginalSheet(package, sheetIndex, ref currentRow);
-
-                // 遍历所有“原始数据”缓冲区
-                foreach (var buffer in save_data_buffer_all_original)
-                {
-                    for (int i = 0; i < buffer.Length; i++)
-                    {
-                        // 如果当前 Sheet 行数超过上限，自动新建 Sheet
-                        if (currentRow > EXCEL_MAX_ROWS)
-                        {
-                            sheetIndex++;
-                            worksheet = CreateNewOriginalSheet(package, sheetIndex, ref currentRow);
-                        }
-
-                        // 写一行 8 通道原始 EEG
-                        worksheet.Cells[currentRow, 1].LoadFromArrays(new[]
-                        {
-                            buffer[i].Cast<object>().ToArray()
-                        });
-                        //// 将 EEG 数据转换为整数（保留整数部分）
-                        //var intData = buffer[i].Select(value => (int)Math.Floor(value)).ToArray();
-
-                        //// 写一行整数类型的 EEG 数据（8 通道）
-                        //worksheet.Cells[currentRow, 1].LoadFromArrays(new object[][] { intData.Cast<object>().ToArray() });
-
-                        currentRow++;
-                    }
-                }
-
-                package.Save();
+                MessageBox.Show("当前没有可保存的原始数据。");
+                return;
             }
 
-            LogHelper.WriteInfoLog("原始 EEG Excel 保存成功（自动拆分 Sheet）");
-            NlogHelper.WriteInfoLog("原始 EEG Excel 保存成功（自动拆分 Sheet）");
-        }
-        private ExcelWorksheet CreateNewOriginalSheet(ExcelPackage package,int sheetIndex,ref int currentRow)
-        {
-            string sheetName = $"EEG_Original_{sheetIndex}";
-            var worksheet = package.Workbook.Worksheets.Add(sheetName);
+            _isSaving = true;
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
 
-            // 表头
-            worksheet.Cells[1, 1].LoadFromArrays(new[]
+            try
             {
-                new object[] { "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7", "Ch8" }
-             });
-
-            currentRow = EXCEL_HEADER_ROWS + 1; // 数据从第 2 行开始
-            return worksheet;
+                await Task.Run(() => SaveExcelBlocks(filePath, snapshot, "EEG_Original"));
+                LogHelper.WriteInfoLog("原始 EEG Excel 保存成功（自动拆分 Sheet）");
+                NlogHelper.WriteInfoLog("原始 EEG Excel 保存成功（自动拆分 Sheet）");
+                MessageBox.Show("原始 Excel 文件保存成功。");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存原始 Excel 文件时出错: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                _isSaving = false;
+            }
         }
+        
         public void ComboBox_amplitude(int scale)
         {
             if (scale == 0)
@@ -1257,9 +1251,174 @@ namespace Collect.Plot
 
         }
         public bool Isclearplot_pro { get; set; }
+        private List<double[][]> SnapshotFilteredBlocks()
+        {
+            lock (_saveBufferLock)
+            {
+                return new List<double[][]>(save_data_buffer_all);
+            }
+        }
+
+        private List<double[][]> SnapshotOriginalBlocks()
+        {
+            lock (_saveBufferLock)
+            {
+                return new List<double[][]>(save_data_buffer_all_original);
+            }
+        }
+
+        private void SaveNs2Blocks(string filePath, List<double[][]> blocks)
+        {
+            const int channelCount = 8;
+            const int samplingRate = 1000;
+            const int timeResolution = 30000;
+            const short minAnalog = -1000;
+            const short maxAnalog = 1000;
+
+            using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write))
+            using (var writer = new BinaryWriter(fs))
+            {
+                // 1. FileTypeID
+                writer.Write(Encoding.ASCII.GetBytes("NEURALCD"));
+
+                // 2. FileSpec
+                writer.Write((byte)2);
+                writer.Write((byte)3);
+
+                // 3. HeaderBytes placeholder
+                long headerPos = writer.BaseStream.Position;
+                writer.Write((uint)0);
+
+                // 4. Sampling label
+                writer.Write(Encoding.ASCII.GetBytes("EEG DATA".PadRight(16, '\0')));
+
+                // 5. Comment
+                writer.Write(Encoding.ASCII.GetBytes("Created by EEG acquisition system".PadRight(256, '\0')));
+
+                // 6. Period & TimeRes
+                writer.Write((uint)(timeResolution / samplingRate));
+                writer.Write((uint)timeResolution);
+
+                // 7. DateTime
+                DateTime now = DateTime.Now;
+                writer.Write((ushort)now.Year);
+                writer.Write((ushort)now.Month);
+                writer.Write((ushort)now.Day);
+                writer.Write((ushort)now.Hour);
+                writer.Write((ushort)now.Minute);
+                writer.Write((ushort)now.Second);
+                writer.Write((ushort)0);
+                writer.Write((ushort)0);
+
+                // 8. Channel count
+                writer.Write((uint)channelCount);
+
+                // 9. 扩展头
+                for (int ch = 0; ch < channelCount; ch++)
+                {
+                    writer.Write(Encoding.ASCII.GetBytes("CC"));
+                    writer.Write((ushort)(ch + 1));
+                    writer.Write(Encoding.ASCII.GetBytes(("CH" + (ch + 1)).PadRight(16, '\0')));
+                    writer.Write((byte)('A' + ch / 32));
+                    writer.Write((byte)(ch % 32));
+                    writer.Write((short)-32768);
+                    writer.Write((short)32767);
+                    writer.Write((short)minAnalog);
+                    writer.Write((short)maxAnalog);
+                    writer.Write(Encoding.ASCII.GetBytes("uV".PadRight(16, '\0')));
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((ushort)0);
+                    writer.Write((uint)0);
+                    writer.Write((uint)0);
+                    writer.Write((ushort)0);
+                }
+
+                // 10. 回填 HeaderBytes
+                long headerEnd = writer.BaseStream.Position;
+                writer.Seek((int)headerPos, SeekOrigin.Begin);
+                writer.Write((uint)headerEnd);
+                writer.Seek((int)headerEnd, SeekOrigin.Begin);
+
+                // 11. 数据包头
+                writer.Write((byte)1);
+                writer.Write((uint)0);
+
+                uint totalSamples = 0;
+                foreach (var buf in blocks)
+                    totalSamples += (uint)buf.Length;
+
+                writer.Write(totalSamples);
+
+                // 12. 数据区
+                foreach (var buf in blocks)
+                {
+                    foreach (var row in buf)
+                    {
+                        for (int ch = 0; ch < channelCount; ch++)
+                        {
+                            int val = (int)row[ch];
+                            if (val > short.MaxValue) val = short.MaxValue;
+                            else if (val < short.MinValue) val = short.MinValue;
+
+                            writer.Write((short)val);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void SaveExcelBlocks(string filePath, List<double[][]> blocks, string sheetPrefix)
+        {
+            ExcelPackage.License.SetNonCommercialOrganization("My Noncommercial organization");
+
+            using (var package = new ExcelPackage(new FileInfo(filePath)))
+            {
+                int sheetIndex = 1;
+                int currentRow = 1;
+
+                ExcelWorksheet worksheet = CreateSheet(package, sheetPrefix, sheetIndex, ref currentRow);
+
+                foreach (var buffer in blocks)
+                {
+                    for (int i = 0; i < buffer.Length; i++)
+                    {
+                        if (currentRow > EXCEL_MAX_ROWS)
+                        {
+                            sheetIndex++;
+                            worksheet = CreateSheet(package, sheetPrefix, sheetIndex, ref currentRow);
+                        }
+
+                        worksheet.Cells[currentRow, 1].LoadFromArrays(new[]
+                        {
+                    buffer[i].Cast<object>().ToArray()
+                });
+
+                        currentRow++;
+                    }
+                }
+
+                package.Save();
+            }
+        }
+
+        private ExcelWorksheet CreateSheet(ExcelPackage package, string sheetPrefix, int sheetIndex, ref int currentRow)
+        {
+            string sheetName = sheetPrefix + "_" + sheetIndex;
+            var worksheet = package.Workbook.Worksheets.Add(sheetName);
+
+            worksheet.Cells[1, 1].LoadFromArrays(new[]
+            {
+                new object[] { "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7", "Ch8" }
+            });
+
+            currentRow = EXCEL_HEADER_ROWS + 1;
+            return worksheet;
+        }
         public void Clear_Plot()
         {
             Numeeg = 0;
+            _sw.Reset();
             EEG_time.Text= "00:00:00";
             Isclearplot_pro = true;
             buffer_index = 0;
@@ -1269,11 +1428,25 @@ namespace Collect.Plot
             eeg_data_buffer.Clear();
             save_data_buffer.Clear();
             save_data_buffer_original.Clear();
-            save_data_buffer_all.Clear();
-            save_data_buffer_all_original.Clear();
+            lock (_saveBufferLock)
+            {
+                save_data_buffer_all.Clear();
+                save_data_buffer_all_original.Clear();
+            }
             for (int i = 0; i < 8; i++)
             {
                 lineData[i].Clear();
+            }
+            deltaRelSeries?.Clear();
+            thetaRelSeries?.Clear();
+            alphaRelSeries?.Clear();
+            betaRelSeries?.Clear();
+            _powerTimeOffsetSec = 0.0;
+            _lastPowerXSec = 0.0;
+            _powerSessionId++;
+            if (powerSurface != null)
+            {
+                powerSurface.XAxis.VisibleRange = new DoubleRange(0, RelPowerHistorySec);
             }
             LogHelper.WriteInfoLog("数据清除成功");
             NlogHelper.WriteInfoLog("数据清除成功");
@@ -1281,26 +1454,24 @@ namespace Collect.Plot
         // 添加定时器相关字段
         private System.Windows.Threading.DispatcherTimer timer;
         private bool isTimerRunning = false;
+        private readonly System.Diagnostics.Stopwatch _sw = new System.Diagnostics.Stopwatch();
         // 初始化定时器
         private void InitializeTimer()
         {
             timer = new System.Windows.Threading.DispatcherTimer();
             timer.Interval = TimeSpan.FromSeconds(1); // 每5秒执行一次，可以根据需要调整
             timer.Tick += Timer_Tick;
+            _sw.Reset();
         }
-        private TimeSpan _elapsedTime = TimeSpan.Zero;
+      
 
         // 定时器事件处理
         private void Timer_Tick(object sender, EventArgs e)
         {
-            _elapsedTime = _elapsedTime.Add(TimeSpan.FromSeconds(1));
-
-            // 格式化为 HH:mm:ss 显示
-            EEG_time.Text = _elapsedTime.ToString(@"hh\:mm\:ss");
+            EEG_time.Text = _sw.Elapsed.ToString(@"hh\:mm\:ss");
+            NumEEG.Text = Numeeg.ToString();
 
         }
-      
-     
 
         // 启动定时器
         public void StartTimer()
@@ -1313,6 +1484,7 @@ namespace Collect.Plot
             if (!isTimerRunning)
             {
                 timer.Start();
+                _sw.Start();
                 isTimerRunning = true;
                 LogHelper.WriteInfoLog("定时器已启动");
                 NlogHelper.WriteInfoLog("定时器已启动");
@@ -1325,6 +1497,7 @@ namespace Collect.Plot
             if (timer != null && isTimerRunning)
             {
                 timer.Stop();
+                _sw.Stop();
                 isTimerRunning = false;
                 LogHelper.WriteInfoLog("定时器已停止");
                 NlogHelper.WriteInfoLog("定时器已停止");
@@ -1464,6 +1637,41 @@ namespace Collect.Plot
             return y;
         }
     }
-   
-    
+    public sealed class BiquadHPF
+    {
+        private double b0, b1, b2, a1, a2;
+        private double z1, z2;
+
+        public BiquadHPF(double fs, double fc, double Q) => Update(fs, fc, Q);
+
+        public void Update(double fs, double fc, double Q)
+        {
+            double w0 = 2.0 * Math.PI * (fc / fs);
+            double cosw = Math.Cos(w0);
+            double sinw = Math.Sin(w0);
+            double alpha = sinw / (2.0 * Q);
+
+            double B0 = (1 + cosw) / 2.0;
+            double B1 = -(1 + cosw);
+            double B2 = (1 + cosw) / 2.0;
+            double A0 = 1 + alpha;
+            double A1 = -2 * cosw;
+            double A2 = 1 - alpha;
+
+            b0 = B0 / A0; b1 = B1 / A0; b2 = B2 / A0;
+            a1 = A1 / A0; a2 = A2 / A0;
+
+            z1 = z2 = 0.0;
+        }                                                                                   
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public double Process(double x)
+        {
+            double y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            return y;
+        }
+    }
+
 }

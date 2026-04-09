@@ -150,7 +150,9 @@ namespace Collect.EEG
                         // ===== 1) 先把待发送命令全部发出去（模式1/2/开始/停止 都走这里）=====
                         while (_txQueue.TryDequeue(out var msg))
                         {
+                            NlogHelper.WriteInfoLog("准备发送命令: " + BitConverter.ToString(msg));
                             stream.Write(msg, 0, msg.Length);
+                            NlogHelper.WriteInfoLog("命令发送完成: " + BitConverter.ToString(msg));
                         }
 
                         // ===== 2) 你原来的 5 字节发送（如果还需要）=====
@@ -200,8 +202,8 @@ namespace Collect.EEG
                     }
                     catch (Exception ex)
                     {
-                        LogHelper.WriteErrorLog(ex.Message);
-                        NlogHelper.WriteErrorLog(ex.Message);
+                        LogHelper.WriteErrorLog("recvdata异常: " + ex.ToString());
+                        NlogHelper.WriteErrorLog("recvdata异常: " + ex.ToString());
                         break;
                     }
                 }

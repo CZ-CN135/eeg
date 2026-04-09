@@ -11,12 +11,9 @@ namespace Collect.tool
     {
         public sealed class Config
         {
-            // 原始总通道数（用于把结果映射回 8 通道）
             public int ChannelCount = 8;
-
             public double Fs = 500;
 
-            // ===== 4 个频段（默认 EEG 常用）=====
             public double DeltaLow = 0.5;
             public double DeltaHigh = 4.0;
 
@@ -27,24 +24,20 @@ namespace Collect.tool
             public double AlphaHigh = 13.0;
 
             public double BetaLow = 13.0;
-            public double BetaHigh = 30.0;
+            public double BetaHigh = 100.0;
 
-            // ===== 触发条件：Alpha 相对带功率阈值 =====
-            // alphaRel = Palpha / (Pdelta + Ptheta + Palpha + Pbeta)
-            public double AlphaRelativeThreshold = 0.35;
+            // 你当前用的：avgDeltaRel 低于阈值且 avgBetaRel 高于阈值
+            public double DeltaRelativeThreshold = 0.35;
+            public double BetaRelativeThreshold = 0.35;
 
-            // 模式1：至少多少个“参与的通道(即传入window的通道)”满足 alphaRel 才触发
-            public int MinChannelsToTrigger = 2;
+            // 参与通道里至少多少个通道满足 (deltaRel<thr && betaRel>thr) 才允许触发
+            public int MinChannelsToTrigger = 1;
 
-            // ===== 模式2：下一次window，这些“上次模式1命中的通道”都要比上次高 X 才触发 =====
-            // 20% -> 0.20
-            public double Mode2IncreaseRatio = 0.20;
+            public double Mode2IncreaseRatio = 0.20; // 目前未参与判定（保留字段不删）
             public bool EnableMode2 = true;
 
             public int QueueCapacity = 32;
 
-            // 如果你设 true：任意一次触发(模式1或2)后就不再继续处理
-            // 若你希望“先触发模式1再触发模式2”，请保持 false
             public bool StopAfterTrigger = false;
         }
 
@@ -53,42 +46,53 @@ namespace Collect.tool
             public long WindowStartSample;
             public long WindowEndSample;
 
-            // ✅ 仅针对“传入 Stage2 的通道”（长度 = window.Length）
-            // 兼容字段：Ratio 实际表示 AlphaRelative
-            public double[] RatioPerWindowChannel;   // == AlphaRelativePerWindowChannel
-
-            // ✅ RatioPerWindowChannel[k] 对应原始通道号 ChannelIndices[k]
+            // window通道 -> 原始通道映射（长度=m）
             public int[] ChannelIndices;
 
-            // ✅ 映射回原始通道（长度 = cfg.ChannelCount），未参与的通道填 NaN
-            public double[] RatioPerOriginalChannel; // == AlphaRelativePerOriginalChannel
-
-            // ===== 四段功率 + alphaRel =====
+            // ===== 绝对带功率（长度=m）=====
             public double[] PDeltaPerWindowChannel;
             public double[] PThetaPerWindowChannel;
             public double[] PAlphaPerWindowChannel;
             public double[] PBetaPerWindowChannel;
 
+            // ===== 相对带功率（长度=m）=====
+            public double[] DeltaRelativePerWindowChannel;
+            public double[] ThetaRelativePerWindowChannel;
             public double[] AlphaRelativePerWindowChannel;
+            public double[] BetaRelativePerWindowChannel;
+
+            // ===== 相对带功率：映射回原始通道（长度=ChannelCount，未参与=NaN）=====
+            public double[] DeltaRelativePerOriginalChannel;
+            public double[] ThetaRelativePerOriginalChannel;
             public double[] AlphaRelativePerOriginalChannel;
+            public double[] BetaRelativePerOriginalChannel;
 
-            // ✅ 在“参与的通道”里，有多少个 alphaRel >= 阈值
-            public int PassedChannels;
+            // ===== 兼容字段（保留不乱用）：Ratio == AlphaRelative =====
+            public double[] RatioPerWindowChannel;     // == AlphaRelativePerWindowChannel
+            public double[] RatioPerOriginalChannel;   // == AlphaRelativePerOriginalChannel
 
-            // ===== 新增：触发模式 =====
-            // 0=未触发（仅用于Evaluated事件）
-            // 1=模式1触发
-            // 2=模式2触发
+            // ===== 本窗统计 =====
+            public int ActiveChannels;     // 实际参与FFT计算且total>0的通道数
+            public int PassedChannels;     // 满足 (deltaRel<thr && betaRel>thr) 的通道数
+            public double AvgDeltaRelative;
+            public double AvgBetaRelative;
+            public double AvgThetaRelative;
+            public double AvgAlphaRelative;
+
+            // ===== 触发信息 =====
+            // 0=未触发（仅Evaluated）
+            // 1=趋势触发（与上一窗相比 delta↓ 且 beta↑）
+            // 2=阈值触发（avgDeltaRel<thr 且 avgBetaRel>thr 且 passed>=MinChannelsToTrigger）
             public int TriggerMode;
 
-            // 本次触发涉及的“原始通道号”
+            // 本次触发涉及的原始通道号（通常是满足passed条件的那几个）
             public int[] TriggeredOriginalChannels;
 
-            // 本次触发通道对应的“当前alphaRel”
-            public double[] TriggeredAlphaRelative;
+            public double[] TriggeredDeltaRelative;
+            public double[] TriggeredBetaRelative;
 
-            // 仅模式2：这些通道在“上一次模式1基准”的 alphaRel（与 TriggeredOriginalChannels 一一对应）
-            public double[] PreviousAlphaRelative;
+            public double? PreviousAvgDeltaRelative;
+            public double? PreviousAvgBetaRelative;
         }
 
         public event EventHandler<ResultEventArgs> OnStage2Evaluated;
@@ -98,18 +102,16 @@ namespace Collect.tool
         private BlockingCollection<Job> _queue;
         private CancellationTokenSource _cts;
         private Task _worker;
-
         private volatile bool _stopProcessing;
 
-        // ===== 模式2基准：来自“上一次模式1触发”的那组通道 =====
-        private bool _mode2Pending;                 // 是否等待“下一次window”进行模式2比较
-        private int[] _mode1BaselineCh;             // 原始通道号集合
-        private double[] _mode1BaselineAlphaRel;    // 上一次对应通道的alphaRel
+        // 上一窗平均值（用于趋势触发）
+        private double? _previousAvgDeltaRel = null;
+        private double? _previousAvgBetaRel = null;
 
         private sealed class Job
         {
-            public double[][] Window;     // [m][n]  m=参与通道数（变长）
-            public int[] Indices;         // [m] 对应原始通道号
+            public double[][] Window; // [m][n]
+            public int[] Indices;     // [m] 原始通道号
             public long Start;
             public long End;
         }
@@ -121,7 +123,6 @@ namespace Collect.tool
             if (_cfg.Fs <= 0) throw new ArgumentException("Fs must be > 0");
             if (_cfg.MinChannelsToTrigger < 1) throw new ArgumentException("MinChannelsToTrigger must be >= 1");
             if (_cfg.Mode2IncreaseRatio < 0) throw new ArgumentException("Mode2IncreaseRatio must be >= 0");
-
             ValidateBands(_cfg);
         }
 
@@ -138,8 +139,10 @@ namespace Collect.tool
             Check(c.AlphaLow, c.AlphaHigh, "Alpha");
             Check(c.BetaLow, c.BetaHigh, "Beta");
 
-            if (c.AlphaRelativeThreshold < 0 || c.AlphaRelativeThreshold > 1.0)
-                throw new ArgumentException("AlphaRelativeThreshold must be in [0,1]");
+            if (c.DeltaRelativeThreshold < 0 || c.DeltaRelativeThreshold > 1.0)
+                throw new ArgumentException("DeltaRelativeThreshold must be in [0,1]");
+            if (c.BetaRelativeThreshold < 0 || c.BetaRelativeThreshold > 1.0)
+                throw new ArgumentException("BetaRelativeThreshold must be in [0,1]");
         }
 
         public void Start()
@@ -150,9 +153,8 @@ namespace Collect.tool
             _cts = new CancellationTokenSource();
             _stopProcessing = false;
 
-            _mode2Pending = false;
-            _mode1BaselineCh = null;
-            _mode1BaselineAlphaRel = null;
+            _previousAvgDeltaRel = null;
+            _previousAvgBetaRel = null;
 
             _worker = Task.Run(() => WorkerLoop(_cts.Token), _cts.Token);
         }
@@ -174,20 +176,6 @@ namespace Collect.tool
             }
         }
 
-        /// <summary>
-        /// 兼容旧接口：不传 ChannelIndices 时，默认认为 window[0]..window[m-1] 对应通道 0..m-1
-        /// </summary>
-        public void PushWindow(double[][] window, long startSample, long endSample)
-        {
-            if (window == null || window.Length == 0) return;
-            var idx = new int[window.Length];
-            for (int i = 0; i < idx.Length; i++) idx[i] = i;
-            PushWindow(window, idx, startSample, endSample);
-        }
-
-        /// <summary>
-        /// ✅ 推荐接口：window 只包含“通过 Stage1 的通道”，indices 指明它们对应的原始通道号
-        /// </summary>
         public void PushWindow(double[][] window, int[] channelIndices, long startSample, long endSample)
         {
             if (window == null || window.Length == 0) return;
@@ -224,18 +212,32 @@ namespace Collect.tool
                 var pTheta = new double[m];
                 var pAlpha = new double[m];
                 var pBeta = new double[m];
-                var alphaRel = new double[m];
 
-                var alphaRelOrig = new double[_cfg.ChannelCount];
-                for (int i = 0; i < alphaRelOrig.Length; i++) alphaRelOrig[i] = double.NaN;
+                var deltaRel = new double[m];
+                var thetaRel = new double[m];
+                var alphaRel = new double[m];
+                var betaRel = new double[m];
+
+                // 映射回原始通道（未参与=NaN）
+                var deltaRelOrig = NewNaNArray(_cfg.ChannelCount);
+                var thetaRelOrig = NewNaNArray(_cfg.ChannelCount);
+                var alphaRelOrig = NewNaNArray(_cfg.ChannelCount);
+                var betaRelOrig = NewNaNArray(_cfg.ChannelCount);
+
+                double sumDeltaRel = 0.0, sumBetaRel = 0.0, sumThetaRel = 0.0, sumAlphaRel = 0.0;
+                int activeChannels = 0;
 
                 int passed = 0;
+                var trigOrig = new List<int>();
+                var trigDelta = new List<double>();
+                var trigBeta = new List<double>();
 
                 for (int k = 0; k < m; k++)
                 {
                     var x = job.Window[k];
 
-                    double d = 0, t = 0, a = 0, b = 0, rel = 0;
+                    double d = 0, t = 0, a = 0, b = 0;
+                    double deltaRelValue = 0, thetaRelValue = 0, alphaRelValue = 0, betaRelValue = 0;
 
                     if (x != null && x.Length >= 8)
                     {
@@ -245,185 +247,180 @@ namespace Collect.tool
                         b = BandPowerFFT(x, _cfg.BetaLow, _cfg.BetaHigh, _cfg.Fs);
 
                         double total = d + t + a + b;
-                        rel = (total <= 1e-12) ? 0.0 : (a / total);
+                        if (total > 1e-12)
+                        {
+                            deltaRelValue = d / total;
+                            thetaRelValue = t / total;
+                            alphaRelValue = a / total;
+                            betaRelValue = b / total;
+
+                            sumDeltaRel += deltaRelValue;
+                            sumThetaRel += thetaRelValue;
+                            sumAlphaRel += alphaRelValue;
+                            sumBetaRel += betaRelValue;
+                            activeChannels++;
+                        }
                     }
 
                     pDelta[k] = d;
                     pTheta[k] = t;
                     pAlpha[k] = a;
                     pBeta[k] = b;
-                    alphaRel[k] = rel;
 
+                    deltaRel[k] = deltaRelValue;
+                    thetaRel[k] = thetaRelValue;
+                    alphaRel[k] = alphaRelValue;
+                    betaRel[k] = betaRelValue;
+
+                    // ===== deltaRelOrig 的含义：把“参与通道k”的结果，放到“原始通道号origCh”的位置上 =====
                     int origCh = job.Indices[k];
                     if (origCh >= 0 && origCh < _cfg.ChannelCount)
-                        alphaRelOrig[origCh] = rel;
-
-                    if (rel >= _cfg.AlphaRelativeThreshold) passed++;
-                }
-
-                // ===== 先发 Evaluated（不带触发模式）=====
-                var evalArgs = BuildArgs(job, pDelta, pTheta, pAlpha, pBeta, alphaRel, alphaRelOrig, passed,
-                                        triggerMode: 0,
-                                        trigCh: null, trigCur: null, trigPrev: null);
-                OnStage2Evaluated?.Invoke(this, evalArgs);
-
-                // ===== 模式2：只检查“上一轮模式1命中的那些通道”，并且只检查一次（下一次window）=====
-                if (_cfg.EnableMode2 && _mode2Pending)
-                {
-                    // “后一次”机会无论成功失败，都消耗掉
-                    _mode2Pending = false;
-
-                    if (TryTriggerMode2(job, alphaRel, out int[] mode2Ch, out double[] prevRel, out double[] curRel))
                     {
-                        var mode2Args = BuildArgs(job, pDelta, pTheta, pAlpha, pBeta, alphaRel, alphaRelOrig, passed,
-                                                  triggerMode: 2,
-                                                  trigCh: mode2Ch, trigCur: curRel, trigPrev: prevRel);
+                        deltaRelOrig[origCh] = deltaRelValue;
+                        thetaRelOrig[origCh] = thetaRelValue;
+                        alphaRelOrig[origCh] = alphaRelValue;
+                        betaRelOrig[origCh] = betaRelValue;
+                    }
 
-                        OnStage2Triggered?.Invoke(this, mode2Args);
-
-                        if (_cfg.StopAfterTrigger) _stopProcessing = true;
+                    // per-channel passed：deltaRel<thr 且 betaRel>thr
+                    if (deltaRelValue < _cfg.DeltaRelativeThreshold && betaRelValue > _cfg.BetaRelativeThreshold)
+                    {
+                        passed++;
+                        if (origCh >= 0 && origCh < _cfg.ChannelCount)
+                        {
+                            trigOrig.Add(origCh);
+                            trigDelta.Add(deltaRelValue);
+                            trigBeta.Add(betaRelValue);
+                        }
                     }
                 }
 
-                // ===== 模式1：本次window中，超阈值通道数 >= MinChannelsToTrigger =====
-                if (passed >= _cfg.MinChannelsToTrigger)
+                double avgDeltaRel = activeChannels > 0 ? sumDeltaRel / activeChannels : 0.0;
+                double avgBetaRel = activeChannels > 0 ? sumBetaRel / activeChannels : 0.0;
+                double avgThetaRel = activeChannels > 0 ? sumThetaRel / activeChannels : 0.0;
+                double avgAlphaRel = activeChannels > 0 ? sumAlphaRel / activeChannels : 0.0;
+
+                // ===== 先发 Evaluated =====
+                var evalArgs = BuildArgs(
+                    job,
+                    pDelta, pTheta, pAlpha, pBeta,
+                    deltaRel, thetaRel, alphaRel, betaRel,
+                    deltaRelOrig, thetaRelOrig, alphaRelOrig, betaRelOrig,
+                    activeChannels, passed, avgDeltaRel, avgBetaRel, avgThetaRel, avgAlphaRel,
+                    triggerMode: 0,
+                    trigCh: null, trigDelta: null, trigBeta: null,
+                    prevAvgDelta: _previousAvgDeltaRel, prevAvgBeta: _previousAvgBetaRel
+                );
+                OnStage2Evaluated?.Invoke(this, evalArgs);
+
+                // ===== 触发判定 =====
+                bool thresholdHit = (avgDeltaRel < _cfg.DeltaRelativeThreshold) &&
+                                    (avgBetaRel > _cfg.BetaRelativeThreshold) &&
+                                    (passed >= _cfg.MinChannelsToTrigger);
+
+                bool trendHit = _previousAvgDeltaRel.HasValue && _previousAvgBetaRel.HasValue &&
+                                (avgDeltaRel < _previousAvgDeltaRel.Value) &&
+                                (avgDeltaRel < _cfg.DeltaRelativeThreshold) &&
+                                (avgBetaRel > _previousAvgBetaRel.Value) &&
+                                (avgBetaRel > _cfg.BetaRelativeThreshold);
+
+                int triggerMode = 0;
+                if (thresholdHit) triggerMode = 2;
+                else if (trendHit) triggerMode = 1;
+
+                if (triggerMode != 0)
                 {
-                    // 选出本次超阈值的“原始通道号集合”，作为模式2基准
-                    ExtractMode1Baseline(job, alphaRel, out int[] mode1Ch, out double[] mode1Rel);
+                    // 若 passed 列表为空（极少见），兜底：用全部参与通道
+                    int[] trigCh = trigOrig.Count > 0 ? trigOrig.ToArray() : (int[])job.Indices.Clone();
+                    double[] trigD = trigDelta.Count > 0 ? trigDelta.ToArray() : (double[])deltaRel.Clone();
+                    double[] trigB = trigBeta.Count > 0 ? trigBeta.ToArray() : (double[])betaRel.Clone();
 
-                    // 保存为下一次window的比较基准（通道必须按原始通道对应）
-                    _mode1BaselineCh = mode1Ch;
-                    _mode1BaselineAlphaRel = mode1Rel;
-                    _mode2Pending = true;
+                    var trigArgs = BuildArgs(
+                        job,
+                        pDelta, pTheta, pAlpha, pBeta,
+                        deltaRel, thetaRel, alphaRel, betaRel,
+                        deltaRelOrig, thetaRelOrig, alphaRelOrig, betaRelOrig,
+                        activeChannels, passed, avgDeltaRel, avgBetaRel, avgThetaRel, avgAlphaRel,
+                        triggerMode,
+                        trigCh, trigD, trigB,
+                        prevAvgDelta: _previousAvgDeltaRel, prevAvgBeta: _previousAvgBetaRel
+                    );
 
-                    var mode1Args = BuildArgs(job, pDelta, pTheta, pAlpha, pBeta, alphaRel, alphaRelOrig, passed,
-                                              triggerMode: 1,
-                                              trigCh: mode1Ch, trigCur: mode1Rel, trigPrev: null);
-
-                    OnStage2Triggered?.Invoke(this, mode1Args);
+                    OnStage2Triggered?.Invoke(this, trigArgs);
 
                     if (_cfg.StopAfterTrigger) _stopProcessing = true;
                 }
+
+                // ===== 更新上一窗平均值（用于下一窗趋势比较）=====
+                _previousAvgDeltaRel = avgDeltaRel;
+                _previousAvgBetaRel = avgBetaRel;
             }
         }
 
         private ResultEventArgs BuildArgs(
             Job job,
             double[] pDelta, double[] pTheta, double[] pAlpha, double[] pBeta,
-            double[] alphaRel, double[] alphaRelOrig,
+            double[] deltaRel, double[] thetaRel, double[] alphaRel, double[] betaRel,
+            double[] deltaRelOrig, double[] thetaRelOrig, double[] alphaRelOrig, double[] betaRelOrig,
+            int activeChannels,
             int passed,
+            double avgDeltaRel, double avgBetaRel, double avgThetaRel, double avgAlphaRel,
             int triggerMode,
             int[] trigCh,
-            double[] trigCur,
-            double[] trigPrev)
+            double[] trigDelta,
+            double[] trigBeta,
+            double? prevAvgDelta,
+            double? prevAvgBeta)
         {
-            // 兼容旧字段：Ratio = AlphaRelative
             return new ResultEventArgs
             {
                 WindowStartSample = job.Start,
                 WindowEndSample = job.End,
 
-                RatioPerWindowChannel = (double[])alphaRel.Clone(),
                 ChannelIndices = (int[])job.Indices.Clone(),
+
+                PDeltaPerWindowChannel = (double[])pDelta.Clone(),
+                PThetaPerWindowChannel = (double[])pTheta.Clone(),
+                PAlphaPerWindowChannel = (double[])pAlpha.Clone(),
+                PBetaPerWindowChannel = (double[])pBeta.Clone(),
+
+                DeltaRelativePerWindowChannel = (double[])deltaRel.Clone(),
+                ThetaRelativePerWindowChannel = (double[])thetaRel.Clone(),
+                AlphaRelativePerWindowChannel = (double[])alphaRel.Clone(),
+                BetaRelativePerWindowChannel = (double[])betaRel.Clone(),
+
+                DeltaRelativePerOriginalChannel = (double[])deltaRelOrig.Clone(),
+                ThetaRelativePerOriginalChannel = (double[])thetaRelOrig.Clone(),
+                AlphaRelativePerOriginalChannel = (double[])alphaRelOrig.Clone(),
+                BetaRelativePerOriginalChannel = (double[])betaRelOrig.Clone(),
+
+                // 兼容字段：Ratio = AlphaRelative
+                RatioPerWindowChannel = (double[])alphaRel.Clone(),
                 RatioPerOriginalChannel = (double[])alphaRelOrig.Clone(),
 
-                PDeltaPerWindowChannel = pDelta,
-                PThetaPerWindowChannel = pTheta,
-                PAlphaPerWindowChannel = pAlpha,
-                PBetaPerWindowChannel = pBeta,
-
-                AlphaRelativePerWindowChannel = alphaRel,
-                AlphaRelativePerOriginalChannel = alphaRelOrig,
-
+                ActiveChannels = activeChannels,
                 PassedChannels = passed,
+                AvgDeltaRelative = avgDeltaRel,
+                AvgBetaRelative = avgBetaRel,
+                AvgThetaRelative = avgThetaRel,
+                AvgAlphaRelative = avgAlphaRel,
 
                 TriggerMode = triggerMode,
                 TriggeredOriginalChannels = trigCh,
-                TriggeredAlphaRelative = trigCur,
-                PreviousAlphaRelative = trigPrev
+                TriggeredDeltaRelative = trigDelta,
+                TriggeredBetaRelative = trigBeta,
+                PreviousAvgDeltaRelative = prevAvgDelta,
+                PreviousAvgBetaRelative = prevAvgBeta
             };
         }
 
-        /// <summary>
-        /// 模式1基准：提取本次 alphaRel >= threshold 的通道（按“原始通道号”保存）及其 alphaRel
-        /// </summary>
-        private void ExtractMode1Baseline(Job job, double[] alphaRel, out int[] baselineCh, out double[] baselineRel)
+        private static double[] NewNaNArray(int n)
         {
-            var chList = new List<int>();
-            var relList = new List<double>();
-
-            for (int k = 0; k < job.Indices.Length; k++)
-            {
-                if (alphaRel[k] >= _cfg.AlphaRelativeThreshold)
-                {
-                    int origCh = job.Indices[k];
-                    if (origCh < 0 || origCh >= _cfg.ChannelCount) continue;
-
-                    chList.Add(origCh);
-                    relList.Add(alphaRel[k]);
-                }
-            }
-
-            baselineCh = chList.ToArray();
-            baselineRel = relList.ToArray();
+            var a = new double[n];
+            for (int i = 0; i < n; i++) a[i] = double.NaN;
+            return a;
         }
 
-        /// <summary>
-        /// 模式2：下一次window里，要求“上一次模式1基准通道”的 alphaRel 都比上次对应通道高 (1+ratio)
-        /// 注意：通道按原始通道号一一对应；若当前window缺少某个通道，则直接失败
-        /// </summary>
-        private bool TryTriggerMode2(Job job, double[] alphaRel, out int[] ch, out double[] prevRel, out double[] curRel)
-        {
-            ch = null;
-            prevRel = null;
-            curRel = null;
-
-            if (_mode1BaselineCh == null || _mode1BaselineAlphaRel == null) return false;
-            if (_mode1BaselineCh.Length == 0) return false;
-            if (_mode1BaselineCh.Length != _mode1BaselineAlphaRel.Length) return false;
-
-            // 当前window：构建 origCh -> currentAlphaRel 映射
-            var map = new Dictionary<int, double>(job.Indices.Length);
-            for (int k = 0; k < job.Indices.Length; k++)
-            {
-                int origCh = job.Indices[k];
-                if (origCh < 0 || origCh >= _cfg.ChannelCount) continue;
-                // 若重复，后者覆盖即可
-                map[origCh] = alphaRel[k];
-            }
-
-            double factor = 1.0 + _cfg.Mode2IncreaseRatio;
-
-            int n = _mode1BaselineCh.Length;
-            var cur = new double[n];
-            var prev = new double[n];
-
-            for (int i = 0; i < n; i++)
-            {
-                int origCh = _mode1BaselineCh[i];
-
-                // 必须找到对应通道
-                if (!map.TryGetValue(origCh, out double now)) return false;
-
-                double last = _mode1BaselineAlphaRel[i];
-
-                // last 理论上 >= threshold，不会太小；但还是保护一下
-                if (last <= 1e-12) return false;
-
-                // 要求提升至少 20%：now >= last * 1.2
-                if (now < last * factor) return false;
-
-                cur[i] = now;
-                prev[i] = last;
-            }
-
-            ch = (int[])_mode1BaselineCh.Clone();
-            prevRel = prev;
-            curRel = cur;
-            return true;
-        }
-
-        // ===== 带功率：Hann窗 + 零填充到2^k + FFT + 频带积分 =====
         private static double BandPowerFFT(double[] x, double fLow, double fHigh, double fs)
         {
             int n = x.Length;
@@ -480,7 +477,6 @@ namespace Collect.tool
             return p;
         }
 
-        // 标准 Cooley-Tukey radix-2 FFT
         private static void FFT(Complex[] a, bool inverse)
         {
             int n = a.Length;

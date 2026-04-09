@@ -1,5 +1,4 @@
-﻿using Accord.Math;
-using Collect.Helper;
+﻿using Collect.Helper;
 using Collect.Plot;
 using NLog;
 using NLog.Config;
@@ -24,20 +23,18 @@ namespace Collect
         private Logger logger = null;
         public Plot.EEG eeg;
 
-
-        Plot.EEG_Pro eeg_pro;
         Plot.EEG_Filter eeg_filter;
         
 
         public MainWindow()
         {
             InitializeComponent();
-            meua.IsVisible = false;
-            actionRegion.IsVisible = false;
-            logRegion.IsVisible = false;
+            meua.IsVisible = true;
+            actionRegion.IsVisible = true;
+            logRegion.IsVisible = true;
             NlogHelper.ConfigureNLogForRichTextBox();
             eeg=new Plot.EEG();
-            eeg_pro = new Plot.EEG_Pro(eeg);
+            
             eeg_filter = new Plot.EEG_Filter(eeg);
 
             //AP
@@ -68,42 +65,6 @@ namespace Collect
             Porttextbox.Text = "4321";
             Porttextbox.FontSize = 15;
             stackpanel1.Children.Add(Porttextbox);
-
-            //放大倍数textblock
-            stackpanel1.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "放大倍数"
-            });
-            //放大倍数选择框
-            comboBox1 = new ComboBox();
-            comboBox1.FontSize = 15;
-            comboBox1.Items.Add(new ComboBoxItem()
-            {
-                Content = "0.1"
-            });
-            comboBox1.Items.Add(new ComboBoxItem()
-            {
-                Content = "0.5"
-            });
-            comboBox1.Items.Add(new ComboBoxItem()
-            {
-                Content = "1"
-            });
-            comboBox1.Items.Add(new ComboBoxItem()
-            {
-                Content = "5"
-            });
-            comboBox1.Items.Add(new ComboBoxItem()
-            {
-                Content = "10"
-            });
-            comboBox1.Items.Add(new ComboBoxItem()
-            {
-                Content = "100"
-            });
-            comboBox1.SelectionChanged += ComboBox1_SelectionChanged;
-            stackpanel1.Children.Add(comboBox1);
 
             //PGATextBlock
             stackpanel1.Children.Add(new TextBlock
@@ -136,6 +97,14 @@ namespace Collect
             btn_tcp.Margin = new Thickness(0, 10, 0, 0);
             btn_tcp.Click += Btn_tcp_Click;
 
+            
+            //去除尖峰按钮
+            Button btn_clear_peak = new System.Windows.Controls.Button();
+            btn_clear_peak.Content = "开始去除尖峰";
+            btn_clear_peak.FontSize = 15;
+            btn_clear_peak.Margin = new Thickness(0, 10, 0, 0);
+            btn_clear_peak.Click += Btn_clear_peak_Click;
+
             //保存滤波ns2数据按钮
             Button btn_save_filter_ns2 = new System.Windows.Controls.Button();
             btn_save_filter_ns2.Content = "保存滤波ns2数据";
@@ -162,63 +131,28 @@ namespace Collect
             btn_save_original_excel.Click += Btn_save_original_excel_Click;
             //清除按钮
             Button btn_clear = new System.Windows.Controls.Button();
-            btn_clear.Content = "清除";
+            btn_clear.Content = "清除曲线";
             btn_clear.FontSize = 15;
             btn_clear.Margin = new Thickness(0, 10, 0, 0);
             btn_clear.Click += btn_clear_Click;
 
+            Button btn_clear_log = new System.Windows.Controls.Button();
+            btn_clear_log.Content = "清除日志";
+            btn_clear_log.FontSize = 15;
+            btn_clear_log.Margin = new Thickness(0, 10, 0, 0);
+            btn_clear_log.Click += Btn_clear_log_Click;
+
             //添加控件到APstackpanel
             stackpanel1.Children.Add(btn_tcp);
+            stackpanel1.Children.Add(btn_clear_peak);
             stackpanel1.Children.Add(btn_save_filter_ns2);
             stackpanel1.Children.Add(btn_save_filter_excel);
             stackpanel1.Children.Add(btn_save_original_ns2);
             stackpanel1.Children.Add(btn_save_original_excel);
             stackpanel1.Children.Add(btn_clear);
-
-            ////PWM
-            //stackpanel3 = new StackPanel();
-            //stackpanel3.Orientation = Orientation.Vertical;
-
-            //stackpanel3.Children.Add(new TextBlock
-            //{
-            //    FontSize = 15,
-            //    Text = "占空比(%)"
-            //});
-
-            //Dutytextbox = new System.Windows.Controls.TextBox();
-            //Dutytextbox.Text = "50";
-            //Dutytextbox.FontSize = 15;
-            //stackpanel3.Children.Add(Dutytextbox);
-
-            //stackpanel3.Children.Add(new TextBlock
-            //{
-            //    FontSize = 15,
-            //    Text = "频率(Hz)"
-            //});
-
-            //Freqtextbox = new System.Windows.Controls.TextBox();
-            //Freqtextbox.Text = "200";
-            //Freqtextbox.FontSize = 15;
-            //stackpanel3.Children.Add(Freqtextbox);
-
-            //stackpanel3.Children.Add(new TextBlock
-            //{
-            //    FontSize = 15,
-            //    Text = "时间(ms)"
-            //});
+            stackpanel1.Children.Add(btn_clear_log);
 
 
-            //Timetextbox = new System.Windows.Controls.TextBox();
-            //Timetextbox.Text = "200";
-            //Timetextbox.FontSize = 15;
-            //stackpanel3.Children.Add(Timetextbox);
-
-            //Button btn_send = new System.Windows.Controls.Button();
-            //btn_send.Content = "开始";
-            //btn_send.FontSize = 15;
-            //btn_send.Margin = new Thickness(0, 10, 0, 0);
-            //btn_send.Click += Btn_send_Click;
-            //stackpanel3.Children.Add(btn_send);
 
             //Offline
             //OffLine stackpanel
@@ -236,126 +170,190 @@ namespace Collect
             Freqtextbox_filter.Text = "1000";
             Freqtextbox_filter.FontSize = 15;
             stackpanel4.Children.Add(Freqtextbox_filter);
-            
-            //读取数据
+
+            //读取xlsx数据
             btn_filter = new System.Windows.Controls.Button();
-            btn_filter.Content = "读取数据";
+            btn_filter.Content = "读取xlsx数据";
             btn_filter.FontSize = 15;
             btn_filter.Margin = new Thickness(0, 10, 0, 0);
             btn_filter.Click += Btn_filter_Click;
             stackpanel4.Children.Add(btn_filter);
+
+            //读取ns2数据
+            btn_offline_ns2 = new System.Windows.Controls.Button();
+            btn_offline_ns2.Content = "读取ns2数据";
+            btn_offline_ns2.FontSize = 15;
+            btn_offline_ns2.Margin= new Thickness(0, 10, 0, 0);
+            btn_offline_ns2.Click += Btn_offline_ns2_Click;
+            stackpanel4.Children.Add(btn_offline_ns2);
+
+            //去除尖峰按钮
+            Button btn_clear_peak_offline = new System.Windows.Controls.Button();
+            btn_clear_peak_offline.Content = "开始去除尖峰";
+            btn_clear_peak_offline.FontSize = 15;
+            btn_clear_peak_offline.Margin = new Thickness(0, 10, 0, 0);
+            btn_clear_peak_offline.Click += Btn_clear_peak_offline_Click;
+            stackpanel4.Children.Add(btn_clear_peak_offline);
             //保存滤波数据
             btn_save_offline = new System.Windows.Controls.Button();
-            btn_save_offline.Content = "保存滤波数据";
+            btn_save_offline.Content = "保存滤波NS2数据";
             btn_save_offline.FontSize = 15;
             btn_save_offline.Margin = new Thickness(0, 10, 0, 0);
             btn_save_offline.Click += Btn_save_offline_Click; ;
             stackpanel4.Children.Add(btn_save_offline);
 
+            Button btn_clear_log_offline = new System.Windows.Controls.Button();
+            btn_clear_log_offline.Content = "清除日志";
+            btn_clear_log_offline.FontSize = 15;
+            btn_clear_log_offline.Margin = new Thickness(0, 10, 0, 0);
+            btn_clear_log_offline.Click += Btn_clear_log_offline_Click;
+            stackpanel4.Children.Add(btn_clear_log_offline);
+
             //ThreShold
             //ThreShold stackpanel
-            ThreSholdstackpanel= new StackPanel();
+            ThreSholdstackpanel = new StackPanel();
             ThreSholdstackpanel.Orientation = Orientation.Vertical;
-            //LL最小值
-            ThreSholdstackpanel.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "LL最小值"
-            });
-            //LL最小值textbox
-            LLMintextbox = new System.Windows.Controls.TextBox();
-            LLMintextbox.Text = "0";
-            LLMintextbox.FontSize = 15;
-            ThreSholdstackpanel.Children.Add(LLMintextbox);
 
-            //LL最大值
-            ThreSholdstackpanel.Children.Add(new TextBlock
-            {
-                FontSize = 15,
-                Text = "LL最大值"
-            });
-            //LL最大值textbox
-            LLMaxtextbox = new System.Windows.Controls.TextBox();
-            LLMaxtextbox.Text = "100";
-            LLMaxtextbox.FontSize = 15;
-            ThreSholdstackpanel.Children.Add(LLMaxtextbox);
 
-            //RMS最小值
+            //阈值1
             ThreSholdstackpanel.Children.Add(new TextBlock
             {
                 FontSize = 15,
-                Text = "RMS最小值"
+                Text = "阈值1"
             });
-            //RMS最小值textbox
-            RMSMintextbox = new System.Windows.Controls.TextBox();
-            RMSMintextbox.Text = "0";
-            RMSMintextbox.FontSize = 15;
-            ThreSholdstackpanel.Children.Add(RMSMintextbox);
+            //阈值1textbox
+            ThreShold1textbox = new System.Windows.Controls.TextBox();
+            ThreShold1textbox.Text = "0";
+            ThreShold1textbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(ThreShold1textbox);
 
-            //RMS最大值
+            //阈值2
             ThreSholdstackpanel.Children.Add(new TextBlock
             {
                 FontSize = 15,
-                Text = "RMS最大值"
+                Text = "阈值2"
             });
-            //RMS相对带功率textbox
-            RMSMaxtextbox = new System.Windows.Controls.TextBox();
-            RMSMaxtextbox.Text = "100";
-            RMSMaxtextbox.FontSize = 15;
-            ThreSholdstackpanel.Children.Add(RMSMaxtextbox);
+            //阈值2textbox
+            ThreShold2textbox = new System.Windows.Controls.TextBox();
+            ThreShold2textbox.Text = "10000";
+            ThreShold2textbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(ThreShold2textbox);
 
-            //Alpha相对带功率
+            //短刺激时长
             ThreSholdstackpanel.Children.Add(new TextBlock
             {
                 FontSize = 15,
-                Text = "Alpha相对带功率"
+                Text = "短刺激不应期"
             });
             //Alpha相对带功率textbox
-            Alphatextbox = new System.Windows.Controls.TextBox();
-            Alphatextbox.Text = "0.2";
-            Alphatextbox.FontSize = 15;
-            ThreSholdstackpanel.Children.Add(Alphatextbox);
+            MadShortstimtextbox = new System.Windows.Controls.TextBox();
+            MadShortstimtextbox.Text = "0.2";
+            MadShortstimtextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(MadShortstimtextbox);
+
+            //长刺激时长
+            ThreSholdstackpanel.Children.Add(new TextBlock
+            {
+                FontSize = 15,
+                Text = "长刺激不应期"
+            });
+            //Alpha相对带功率textbox
+            MadLongstimtextbox = new System.Windows.Controls.TextBox();
+            MadLongstimtextbox.Text = "0.2";
+            MadLongstimtextbox.FontSize = 15;
+            ThreSholdstackpanel.Children.Add(MadLongstimtextbox);
+
+            Button btn_set_param = new System.Windows.Controls.Button();
+            btn_set_param.Content = "确定";
+            btn_set_param.FontSize = 15;
+            btn_set_param.Margin = new Thickness(0, 10, 0, 0);
+            btn_set_param.Click += Btn_set_param_Click; 
+            ThreSholdstackpanel.Children.Add(btn_set_param);
+        }
+        private bool is_set_param = false;
+        private void Btn_set_param_Click(object sender, RoutedEventArgs e)
+        {
+            is_set_param=true;
+            NlogHelper.WriteInfoLog($"设置参数：短刺激不应期={MadShortstimtextbox.Text}ms，长刺激不应期={MadLongstimtextbox.Text}ms，阈值1={ThreShold1textbox.Text}，阈值2={ThreShold2textbox.Text}");
         }
 
-        private void Btn_save_offline_Click(object sender, RoutedEventArgs e)
+        private void Btn_clear_log_offline_Click(object sender, RoutedEventArgs e)
         {
-            eeg_filter.save_offline(data);
+            LogRichTextBox.Document.Blocks.Clear();
+        }
+
+        private void Btn_clear_log_Click(object sender, RoutedEventArgs e)
+        {
+            LogRichTextBox.Document.Blocks.Clear();
+        }
+
+        private async void Btn_save_offline_Click(object sender, RoutedEventArgs e)
+        {
+            await eeg_filter.save_offline();
+        
         }
 
         private void Btn_clear_original_filter_txt_Click(object sender, RoutedEventArgs e)
         {
             eeg_filter.clear_original_filter_txt_flag=true;
         }
-        double[][] data; 
+        double[][] xlsxdata;
+        double[][] ns2data;
         //开始滤波
-        private void Btn_filter_Click(object sender, RoutedEventArgs e)
+        private async void Btn_filter_Click(object sender, RoutedEventArgs e)
         {
-            eeg_filter.LLMin= Convert.ToDouble(LLMintextbox.Text);
-            eeg_filter.LLMax= Convert.ToDouble(LLMaxtextbox.Text);
-            eeg_filter.RMSMin= Convert.ToDouble(RMSMintextbox.Text);
-            eeg_filter.RMSMax= Convert.ToDouble(RMSMaxtextbox.Text);
-            eeg_filter.Alpha = Convert.ToDouble(Alphatextbox.Text);
-            data =eeg_filter.LoadExcelAs2DArray(Freqtextbox_filter.Text);
-        }
+            eeg_filter.MadThreshold1= Convert.ToDouble(ThreShold1textbox.Text);
+            eeg_filter.MadThreshold2 = Convert.ToDouble(ThreShold2textbox.Text);
+            eeg_filter.MadShortStimMs = Convert.ToDouble(MadShortstimtextbox.Text);
+            eeg_filter.MadLongStimMs = Convert.ToDouble(MadLongstimtextbox.Text);
 
+            xlsxdata = await eeg_filter.LoadExcelAs2DArray(Freqtextbox_filter.Text);
+            if (xlsxdata == null)
+                return;
+
+            //data =eeg_filter.LoadExcelAs2DArray(Freqtextbox_filter.Text);
+        }
+        private async void Btn_offline_ns2_Click(object sender, RoutedEventArgs e)
+        {
+            eeg_filter.MadThreshold1 = Convert.ToDouble(ThreShold1textbox.Text);
+            eeg_filter.MadThreshold2 = Convert.ToDouble(ThreShold2textbox.Text);
+            eeg_filter.MadShortStimMs = Convert.ToDouble(MadShortstimtextbox.Text);
+            eeg_filter.MadLongStimMs = Convert.ToDouble(MadLongstimtextbox.Text);
+            //data1= eeg_filter.LoadNs2As2DArray();
+            ns2data = await eeg_filter.LoadNs2As2DArray();
+            if (ns2data == null)
+                return;
+        }
+        private void Btn_clear_peak_offline_Click(object sender, RoutedEventArgs e)
+        {
+            var button = sender as Button;
+            var content = button.Content.ToString();
+            if (content == "开始去除尖峰")
+            {
+                eeg_filter.clear_peak_flag = true;
+                NlogHelper.WriteInfoLog("开始去除尖峰");
+                button.Content = "结束去除尖峰";
+            }
+            else
+            {
+                eeg_filter.clear_peak_flag = false;
+                NlogHelper.WriteWarnLog("停止去除尖峰");
+                button.Content = "开始去除尖峰";
+            }
+        }
         private TextBox Iptextbox;
         private TextBox PGAbox;
         private TextBox fcbox;
         private System.Windows.Controls.TextBox Porttextbox;
         private ComboBox comboBox;
         private ComboBox comboBox1;
-        private LoggingConfiguration config;
-        private WpfRichTextBoxTarget target;
-        private System.Windows.Controls.RichTextBox log;
-        private TextBox Dutytextbox;
-        private TextBox Freqtextbox;
-        private TextBox Timetextbox;
+   
         private TextBox Freqtextbox_filter;
-        private TextBox LLMintextbox;
-        private TextBox LLMaxtextbox;
-        private TextBox RMSMaxtextbox;
-        private TextBox Alphatextbox;
-        private TextBox RMSMintextbox;
+    
+        private TextBox MadShortstimtextbox;
+        private TextBox MadLongstimtextbox;
+        private TextBox ThreShold1textbox;
+        private TextBox ThreShold2textbox;
 
         private StackPanel stackpanel1;
         private StackPanel stackpanel2;
@@ -363,6 +361,7 @@ namespace Collect
         private StackPanel stackpanel4;
         private StackPanel ThreSholdstackpanel;
         private Button btn_filter;
+        private Button btn_offline_ns2;
         private Button btn_save_offline;
 
         private void ListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -404,41 +403,7 @@ namespace Collect
                 }
 
             }
-            if (tag == "EEG_Pro")
-            {
-
-                var existingEEGProDocumentPane = PlotGroup.Children
-               .OfType<LayoutDocumentPane>()
-               .FirstOrDefault(m => m.Children.Any(doc => doc.Title == "EEG_Pro"));
-                if (existingEEGProDocumentPane == null)
-                {
-                    var EEG_ProDocumentPane = new LayoutDocumentPane();
-                    PlotGroup.Children.Add(EEG_ProDocumentPane);
-
-                    var EEG_ProDocument = new LayoutDocument();
-                    EEG_ProDocument.Content = eeg_pro;
-
-                    EEG_ProDocument.Title = "EEG_Spectrum";
-                    EEG_ProDocumentPane.Children.Add(EEG_ProDocument);
-
-                    EEG_ProDocument.Closed += (a, b) =>
-                    {
-                        EEG_ProDocumentPane.Children.Remove(EEG_ProDocument);
-                    };
-                }
-                else
-                {
-                    foreach (var doc in existingEEGProDocumentPane.Children)
-                    {
-                        if (doc is LayoutDocument layoutDocument && layoutDocument.Title == "EEG_Pro")
-                        {
-                            layoutDocument.IsSelected = true;
-                            break;
-                        }
-                    }
-                }
-
-            }
+            
             if (tag == "EEG_OffLine")
             {
                 var existingEEGFilterDocumentPane = PlotGroup.Children
@@ -512,54 +477,51 @@ namespace Collect
         {
             var button = sender as Button;
             var content = button.Content.ToString();
-            bool sucess = eeg.TCP_Install_ecg(content, Iptextbox.Text, int.Parse(Porttextbox.Text));
+
             eeg.PGA = Convert.ToInt16(PGAbox.Text);
-            eeg.LLMin= Convert.ToDouble(LLMintextbox.Text);
-            eeg.LLMax= Convert.ToDouble(LLMaxtextbox.Text);
-            eeg.RMSMin= Convert.ToDouble(RMSMintextbox.Text);
-            eeg.RMSMax= Convert.ToDouble(RMSMaxtextbox.Text);
-            eeg.Alpha = Convert.ToDouble(Alphatextbox.Text);
             eeg.set_filter_params(Convert.ToDouble(fcbox.Text));
+
+            if (is_set_param)
+            {
+                is_set_param = false;
+                eeg.MadShortStimMs = Convert.ToDouble(MadShortstimtextbox.Text);
+                eeg.MadLongStimMs = Convert.ToDouble(MadLongstimtextbox.Text);
+                eeg.MadThreshold1 = Convert.ToDouble(ThreShold1textbox.Text);
+                eeg.MadThreshold2 = Convert.ToDouble(ThreShold2textbox.Text);
+            }
+
+            bool sucess = eeg.TCP_Install_ecg(content, Iptextbox.Text, int.Parse(Porttextbox.Text));
+
             if (sucess)
-            {
-                //eeg.client.IsWri_start = true;
                 button.Content = "结束";
-            }
             else
-            {
-                //eeg.client.IsWri_start = false;
                 button.Content = "开始";
-            }
         }
 
-        //发送pwm参数
-        private void Btn_send_Click(object sender, RoutedEventArgs e)
+        private void Btn_clear_peak_Click(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             var content = button.Content.ToString();
-            if (content == "开始")
+            if(content=="开始去除尖峰")
             {
-                eeg_pro.IsStm = true;
-                eeg.client.freq2 = Freqtextbox.Text;
-                eeg.client.duty2 = Dutytextbox.Text;
-                eeg.client.time2 = Timetextbox.Text;
-                NlogHelper.WriteInfoLog("PWM参数已就绪，开始给出刺激");
-                button.Content = "结束";
+                eeg.clear_peak_flag = true;
+                NlogHelper.WriteInfoLog("开始去除尖峰");
+                button.Content = "结束去除尖峰";
             }
             else
             {
-                eeg_pro.IsStm = false;
-                NlogHelper.WriteWarnLog("停止给出刺激");
-                button.Content = "开始";
+                eeg.clear_peak_flag = false;
+                NlogHelper.WriteWarnLog("停止去除尖峰");
+                button.Content = "开始去除尖峰";
             }
-            
-            
         }
+
+        
 
         private void ComboBox1_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             eeg.ComboBox_amplitude(comboBox1.SelectedIndex);
-            eeg_pro.ComboBox_amplitude(comboBox1.SelectedIndex);
+            
         }
 
         private void btn_clear_Click(object sender, RoutedEventArgs e)
@@ -567,36 +529,21 @@ namespace Collect
             eeg.Clear_Plot();
         }
 
-        private void Btn_save_filter_filter_Click(object sender, RoutedEventArgs e)
+        private async void Btn_save_filter_filter_Click(object sender, RoutedEventArgs e)
         {
-            eeg.button_save_ecg_filter_ns2();
+            await eeg.button_save_ecg_filter_ns2();
         }
-        private void Btn_save_filter_excel_Click(object sender, RoutedEventArgs e)
+        private async void Btn_save_filter_excel_Click(object sender, RoutedEventArgs e)
         {
-            eeg.button_save_ecg_filter_excel();
+            await eeg.button_save_ecg_filter_excel();
         }
-        private void Btn_save_original_ns2_Click(object sender, RoutedEventArgs e)
+        private async void Btn_save_original_ns2_Click(object sender, RoutedEventArgs e)
         {
-            eeg.button_save_ecg_original_ns2();
+            await eeg.button_save_ecg_original_ns2();
         }
-        private void Btn_save_original_excel_Click(object sender, RoutedEventArgs e)
+        private async void Btn_save_original_excel_Click(object sender, RoutedEventArgs e)
         {
-            eeg.button_save_ecg_original_excel();
-        }
-
-        private void Com_tcp_Click(object sender, RoutedEventArgs e)
-        {
-            var button = sender as Button;
-            var content = button.Content.ToString();
-            bool sucess = eeg.Serial_install_ecg(content, comboBox.SelectedItem.ToString());
-            if (sucess)
-            {
-                button.Content = "结束";
-            }
-            else
-            {
-                button.Content = "开始";
-            }
+            await eeg.button_save_ecg_original_excel();
         }
 
         private void ComboBox_DropDownOpened(object sender, EventArgs e)

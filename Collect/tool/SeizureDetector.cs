@@ -13,16 +13,15 @@ namespace Collect.tool
             public int ChannelCount = 8;      // 通道数
 
             public double Fs = 500;           // 采样率 Hz
+            public double RmsStdMultiplier = 3.0;
             public double WindowMs = 200;     // Stage1: 200ms
             public double StepMs = 50;        // Stage1: 50ms
             public double WarmupMs = 1000;    // 前 1s 不检测
 
             // Stage1 阈值范围（单位按你的输入 μV）
-            // 触发条件：RMS 在 [RmsMin, RmsMax] 且 LL 在 [LlMin, LlMax]
+            // 触发条件：RMS 在 [RmsMin, RmsMax]
             public double RmsMin = 80;
             public double RmsMax = double.PositiveInfinity;   // 不想设上限就保持无穷大
-            public double LlMin = 2000;
-            public double LlMax = double.PositiveInfinity;    // 不想设上限就保持无穷大
 
             // 至少有多少个通道满足条件才算 Stage1 触发
             public int MinChannelsToTrigger = 3;
@@ -46,13 +45,10 @@ namespace Collect.tool
             public long WindowStartSample;
             public long WindowEndSample;
             public double[] RmsPerChannel;
-            public double[] LlPerChannel;
             public int PassedChannels;
         }
 
         // ===== Stage2 数据块事件参数 =====
-        // ✅ Window 只包含“通过 Stage1 条件”的通道数据
-        // ✅ ChannelIndices[k] 表示 Window[k] 对应原始通道号（0..ChannelCount-1）
         public sealed class Stage2WindowEventArgs : EventArgs
         {
             public long WindowStartSample;
@@ -105,7 +101,6 @@ namespace Collect.tool
             if (_cfg.WarmupMs < 0) throw new ArgumentException("WarmupMs must be >= 0");
 
             if (_cfg.RmsMin > _cfg.RmsMax) throw new ArgumentException("RmsMin must be <= RmsMax");
-            if (_cfg.LlMin > _cfg.LlMax) throw new ArgumentException("LlMin must be <= LlMax");
             if (_cfg.MinChannelsToTrigger < 1) throw new ArgumentException("MinChannelsToTrigger must be >= 1");
 
             _nWin = (int)Math.Round(_cfg.Fs * _cfg.WindowMs / 1000.0);
@@ -144,10 +139,7 @@ namespace Collect.tool
         {
             if (_worker != null) return;
 
-            _queue = new BlockingCollection<double[]>(
-                new ConcurrentQueue<double[]>(),
-                _cfg.QueueCapacity
-            );
+            _queue = new BlockingCollection<double[]>(new ConcurrentQueue<double[]>(), _cfg.QueueCapacity);
             _cts = new CancellationTokenSource();
             _worker = Task.Run(() => WorkerLoop(_cts.Token), _cts.Token);
         }
@@ -226,7 +218,6 @@ namespace Collect.tool
         private void EvaluateCurrentWindow(long winStart, long winEnd)
         {
             var rms = new double[_cfg.ChannelCount];
-            var ll = new double[_cfg.ChannelCount];
 
             // ✅ 记录满足条件的通道号
             var passedList = new List<int>(_cfg.ChannelCount);
@@ -236,29 +227,43 @@ namespace Collect.tool
             for (int ch = 0; ch < _cfg.ChannelCount; ch++)
             {
                 double sumSq = 0.0;
-                double sumAbsDiff = 0.0;
-
+                double sum = 0.0;
                 double prev = ReadRing(ch, oldestPos);
                 sumSq += prev * prev;
+                sum += prev;
 
+                // 计算 RMS 和标准差
                 for (int k = 1; k < _nWin; k++)
                 {
                     double x = ReadRing(ch, oldestPos + k);
                     sumSq += x * x;
-                    sumAbsDiff += Math.Abs(x - prev);
+                    sum += x;
                     prev = x;
                 }
 
+                // 计算 RMS
                 double r = Math.Sqrt(sumSq / _nWin);
-                double l = sumAbsDiff / (_nWin - 1);
 
-                rms[ch] = r;
-                ll[ch] = l;
+                // 计算样本标准差
+                double mean = sum / _nWin;  // 计算均值
+                double varianceSum = 0.0;
+                for (int k = 0; k < _nWin; k++)
+                {
+                    double diff = ReadRing(ch, oldestPos + k) - mean;
+                    varianceSum += diff * diff;  // 求平方和
+                }
 
-                bool rmsInRange = (r >= _cfg.RmsMin) && (r <= _cfg.RmsMax);
-                bool llInRange = (l >= _cfg.LlMin) && (l <= _cfg.LlMax);
+                // 样本标准差：使用 (N-1) 而非 N
+                double std = Math.Sqrt(varianceSum / (_nWin - 1));  // 样本标准差
 
-                if (rmsInRange && llInRange)
+
+                // 将 RMS + k × std 结果保存到 rms[ch] 中
+                rms[ch] = r + _cfg.RmsStdMultiplier * std; // 保存到 rms[ch] 中
+
+                // 判断 RMS 是否在合理范围内
+                bool rmsInRange = (rms[ch] >= _cfg.RmsMin) && (rms[ch] <= _cfg.RmsMax);
+
+                if (rmsInRange)
                     passedList.Add(ch);
             }
 
@@ -269,7 +274,6 @@ namespace Collect.tool
                 WindowStartSample = winStart,
                 WindowEndSample = winEnd,
                 RmsPerChannel = rms,
-                LlPerChannel = ll,
                 PassedChannels = passed
             };
 
@@ -288,7 +292,7 @@ namespace Collect.tool
             }
         }
 
-        // ✅ 多了 channels 参数：只提取这些通道的 Stage2 窗口数据
+
         private void TryEmitStage2Window(long winStart, long winEnd, int[] channels)
         {
             if (channels == null || channels.Length == 0) return;

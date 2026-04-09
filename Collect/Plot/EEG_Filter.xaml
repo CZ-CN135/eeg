@@ -13,16 +13,24 @@
                 <ColumnDefinition Width="auto"/>
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
-            <StackPanel Grid.Row="0" Width="70">
-                <!--<Button Content="测试正弦波" x:Name="btn_sincefilt" Click="btn_sincefilt_Click"></Button>
-                <TextBlock Text="频率1"></TextBlock>
-                <TextBox x:Name="freq1" ></TextBox>
-                <TextBlock Text="频率2"></TextBlock>
-                <TextBox x:Name="freq2" ></TextBox>
-                <Button Content="清除图形" Name="btn_clear" Click="btn_clear_Click"></Button>-->
-                <Button  Content="测试FIR" Click="Button_Click"></Button>
-                <Button  Content="测试IIR" Click="Button_Click_1"></Button>
-                <CheckBox x:Name="channel_1"  Foreground="Red" Content="通道1" Margin="10,135,0,0" Checked="channel_1_Checked" Unchecked="channel_1_Unchecked"></CheckBox>
+            <StackPanel Grid.Row="0" Width="120">
+                <TextBlock Text="显示范围" Margin="10,10,0,0"/>
+                <StackPanel Orientation="Horizontal" Margin="10,0,0,0">
+                    <TextBox x:Name="txtStartTime" Width="30" Height="22" 
+                             VerticalContentAlignment="Center"
+                             Text="0"/>
+                    <TextBlock Text="到" VerticalAlignment="Center"/>
+                    <TextBox x:Name="txtEndTime" Width="30"  Height="22"
+                             VerticalContentAlignment="Center"
+                              Text="3"/>
+                    <ComboBox x:Name="timechange"></ComboBox>
+                </StackPanel>
+                <Button Content="更新显示" Margin="10,10,10,0" Click="btn_update_Click"></Button>
+                <TextBlock Text="数据帧数" Margin="10,10,0,0"></TextBlock>
+                <TextBlock Text="" Margin="10,0,0,0" x:Name="NumSample"></TextBlock>
+                <TextBlock Text="总时间" Margin="10,0,0,0"></TextBlock>
+                <TextBlock Text="" Margin="10,0,0,0" x:Name="TotalTime"></TextBlock>
+                <CheckBox x:Name="channel_1"  Foreground="Red" Content="通道1" Margin="10,0,0,0" Checked="channel_1_Checked" Unchecked="channel_1_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_2"  Foreground="Orange" Content="通道2" Margin="10,10,0,0" Checked="channel_2_Checked" Unchecked="channel_2_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_3"   Foreground="Cyan" Content="通道3" Margin="10,10,0,0" Checked="channel_3_Checked" Unchecked="channel_3_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_4" Foreground="Green"  Content="通道4" Margin="10,10,0,0" Checked="channel_4_Checked" Unchecked="channel_4_Unchecked"></CheckBox>
@@ -30,22 +38,98 @@
                 <CheckBox x:Name="channel_6"   Foreground="Orchid" Content="通道6" Margin="10,10,0,0" Checked="channel_6_Checked" Unchecked="channel_6_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_7"  Foreground="Purple" Content="通道7" Margin="10,10,0,0" Checked="channel_7_Checked" Unchecked="channel_7_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_8" Foreground="Brown" Content="通道8" Margin="10,10,0,0" Checked="channel_8_Checked" Unchecked="channel_8_Unchecked"></CheckBox>
-                <TextBlock Text="通道选择" Margin="10,10,0,0"></TextBlock>
-                <ComboBox x:Name="ch" Margin="10,10,10,0"></ComboBox>
+                <TextBlock Text="显示数据类型" Margin="10,10,0,0"></TextBlock>
+                <ComboBox x:Name="showdata" Margin="10,0,10,0"></ComboBox>
+                <TextBlock Text="功率曲线通道" Margin="10,10,0,0"/>
+                <ComboBox x:Name="cmbBandChannel" Margin="10,0,10,0"/>
+                <TextBlock Text="窗长(s)" Margin="10,0,0,0"/>
+                <TextBox x:Name="txtBandWindowSec" Margin="10,0,10,0" Text="2"/>
+                <TextBlock Text="步长(s)" Margin="10,0,0,0"/>
+                <TextBox x:Name="txtBandStepSec" Margin="10,0,10,0" Text="0.5"/>
+                <Button x:Name="btnBandPower"
+                    Content="计算功率曲线"
+                    Margin="10,10,10,0"
+                    Click="btnBandPower_Click"/>
+                <CheckBox x:Name="band_delta"
+                          Foreground="Brown"
+                          Content="Delta"
+                          Margin="10,0,0,0"
+                          
+                          Checked="band_delta_Checked"
+                          Unchecked="band_delta_Unchecked"/>
+
+                <CheckBox x:Name="band_theta"
+                          Foreground="Orange"
+                          Content="Theta"
+                          Margin="10,0,0,0"
+                         
+                          Checked="band_theta_Checked"
+                          Unchecked="band_theta_Unchecked"/>
+
+                <CheckBox x:Name="band_alpha"
+                          Foreground="Green"
+                          Content="Alpha"
+                          Margin="10,0,0,0"
+                          
+                          Checked="band_alpha_Checked"
+                          Unchecked="band_alpha_Unchecked"/>
+                <CheckBox x:Name="band_beta"
+                          Foreground="Blue"
+                          Content="Beta"
+                          Margin="10,0,0,0"
+                          
+                          Checked="band_beta_Checked"
+                          Unchecked="band_beta_Unchecked"/>
+
+                <CheckBox x:Name="band_gamma"
+                          Foreground="Purple"
+                          Content="Gamma"
+                          Margin="10,0,0,0"
+                         
+                          Checked="band_gamma_Checked"
+                          Unchecked="band_gamma_Unchecked"/>
             </StackPanel>
-            <s:SciChartSurface s:ThemeManager.Theme="BrightSpark" x:Name="sciChartSurface"  Grid.Column="1">
-                <!--  Create an X Axis  -->
-                <s:SciChartSurface.XAxis>
-                    <s:NumericAxis/>
-                </s:SciChartSurface.XAxis>
-                <s:SciChartSurface.ChartModifier>
-                    <s:ModifierGroup>
-                        <s:RubberBandXyZoomModifier />
-                        <s:ZoomExtentsModifier />
-                        <s:MouseWheelZoomModifier />
-                    </s:ModifierGroup>
-                </s:SciChartSurface.ChartModifier>
-            </s:SciChartSurface>
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1*"/>
+                    <RowDefinition Height="1*"/>
+                </Grid.RowDefinitions>
+
+                <!-- 原始波形图 -->
+                <s:SciChartSurface s:ThemeManager.Theme="BrightSpark"
+                       x:Name="sciChartSurface"
+                       Grid.Row="0">
+                    <s:SciChartSurface.XAxis>
+                        <s:NumericAxis/>
+                    </s:SciChartSurface.XAxis>
+                    <s:SciChartSurface.ChartModifier>
+                        <s:ModifierGroup>
+                            <s:RubberBandXyZoomModifier />
+                            <s:ZoomExtentsModifier />
+                            <s:MouseWheelZoomModifier />
+                        </s:ModifierGroup>
+                    </s:SciChartSurface.ChartModifier>
+                </s:SciChartSurface>
+                <!-- 频带功率曲线图 -->
+                <s:SciChartSurface s:ThemeManager.Theme="BrightSpark"
+                       x:Name="bandPowerSurface"
+                       Grid.Row="1"
+                       Margin="0,0,0,0">
+                    <s:SciChartSurface.XAxis>
+                        <s:NumericAxis AxisTitle="Time (second)"/>
+                    </s:SciChartSurface.XAxis>
+                    <s:SciChartSurface.YAxis>
+                        <s:NumericAxis AxisTitle="Absolute Power"/>
+                    </s:SciChartSurface.YAxis>
+                    <s:SciChartSurface.ChartModifier>
+                        <s:ModifierGroup>
+                            <s:RubberBandXyZoomModifier />
+                            <s:ZoomExtentsModifier />
+                            <s:MouseWheelZoomModifier />
+                        </s:ModifierGroup>
+                    </s:SciChartSurface.ChartModifier>
+                </s:SciChartSurface>
+            </Grid>
         </Grid>
     </Grid>
 </UserControl>

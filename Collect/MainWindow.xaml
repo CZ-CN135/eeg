@@ -10,7 +10,8 @@
         x:Name="MainWindow1"
         Icon="Logo\燕山大学.jpg"
         Closed="MainWindow1_Closed"
-        Title="脑电处理系统" Height="600" Width="1100"
+        Title="脑电处理系统" Height="850" Width="1300"
+        WindowStartupLocation="CenterScreen"
         >
     <Grid>
         <Grid.RowDefinitions>
@@ -42,7 +43,7 @@
                     <avalon:LayoutPanel Orientation="Vertical">
                         <avalon:LayoutDocumentPaneGroup x:Name="PlotGroup">
                         </avalon:LayoutDocumentPaneGroup>
-                        <avalon:LayoutAnchorablePane DockHeight="120">
+                        <avalon:LayoutAnchorablePane DockHeight="150">
                             <avalon:LayoutAnchorable  Title="日志栏" x:Name="logRegion">
                                 <RichTextBox   x:Name="LogRichTextBox" />
                             </avalon:LayoutAnchorable>

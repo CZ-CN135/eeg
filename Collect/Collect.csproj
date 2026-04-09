@@ -239,11 +239,7 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
-    <Compile Include="EEG\SerialControl.cs" />
     <Compile Include="EEG\TCPClient.cs" />
-    <Compile Include="FIR\EEGFIRFilterExtension.cs" />
-    <Compile Include="FIR\FIRFilter.cs" />
-    <Compile Include="FIR\FIRFilterExample.cs" />
     <Compile Include="Helper\WpfRichTextBoxRowColoringRule.cs" />
     <Compile Include="Helper\WpfRichTextBoxTarget.cs" />
     <Compile Include="Helper\WpfRichTextBoxWordColoringRule.cs" />
@@ -255,16 +251,10 @@
     <Compile Include="Plot\EEG_Filter.xaml.cs">
       <DependentUpon>EEG_Filter.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Plot\EEG_Pro.xaml.cs">
-      <DependentUpon>EEG_Pro.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Power\PowerSpectralDensityAnalyzer.cs" />
-    <Compile Include="Power\SpectrumAnalysisEventArgs1.cs" />
     <Compile Include="tool\BandPowerRatioDetector.cs" />
-    <Compile Include="tool\HexDataProcessor.cs" />
+    <Compile Include="tool\MyNs2Reader.cs" />
     <Compile Include="tool\SeizureDetector.cs" />
-    <Compile Include="tool\SinceWave.cs" />
-    <Compile Include="tool\Stage2Config.cs" />
+    <Compile Include="tool\SingleChannelMadSeizureDetector.cs" />
     <Compile Include="viewModel\MainViewModel.cs" />
     <Compile Include="viewModel\ViewModelLocator.cs" />
     <Page Include="MainWindow.xaml">
@@ -284,10 +274,6 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Plot\EEG_Filter.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Plot\EEG_Pro.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

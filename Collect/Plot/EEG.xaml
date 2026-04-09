@@ -27,15 +27,12 @@
                 <ColumnDefinition Width="auto"/>
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
-            <StackPanel Grid.Row="0" Width="70">
-                <!--<Button Content="测试" Click="Button_Click"></Button>
-                <Button Content="测试正弦波" x:Name="btn_sincewave" Click="btn_sincewave_Click"></Button>
-                <TextBlock Text="频率1"></TextBlock>
-                <TextBox x:Name="freq1" ></TextBox>
-                <TextBlock Text="频率2"></TextBlock>
-                <TextBox x:Name="freq2" ></TextBox>-->
-                <!--<Button Content="清除图形" Name="btn_clear" Click="btn_clear_Click"></Button>-->
-                <CheckBox x:Name="channel_1"  Foreground="Red" Content="通道1" Margin="10,135,0,0" Checked="channel_1_Checked" Unchecked="channel_1_Unchecked"></CheckBox>
+            <StackPanel Grid.Row="0" Width="120">
+                <TextBlock Text="显示数据类型" Margin="10,10,0,0"></TextBlock>
+                <ComboBox x:Name="showdata" Margin="10,0,10,0"></ComboBox>
+                <TextBlock Text="运行模式" Margin="10,10,0,0"></TextBlock>
+                <ComboBox x:Name="runmode" Margin="10,0,10,0"></ComboBox>
+                <CheckBox x:Name="channel_1"  Foreground="Red" Content="通道1" Margin="10,0,0,0" Checked="channel_1_Checked" Unchecked="channel_1_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_2"  Foreground="Orange" Content="通道2" Margin="10,10,0,0" Checked="channel_2_Checked" Unchecked="channel_2_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_3"   Foreground="Cyan" Content="通道3" Margin="10,10,0,0" Checked="channel_3_Checked" Unchecked="channel_3_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_4"  Foreground="Green"  Content="通道4" Margin="10,10,0,0" Checked="channel_4_Checked" Unchecked="channel_4_Unchecked"></CheckBox>
@@ -45,34 +42,63 @@
                 <CheckBox x:Name="channel_8"  Foreground="Brown" Content="通道8" Margin="10,10,0,0" Checked="channel_8_Checked" Unchecked="channel_8_Unchecked"></CheckBox>
                 <CheckBox x:Name="channel_1_8"  Foreground="Black" Content="全选" Margin="10,10,0,0" Checked="channel_1_8_Checked"  Unchecked="channel_1_8_Unchecked"></CheckBox>
                 <TextBlock Text="接收数据包" Margin="5,10,0,0"></TextBlock>
-                <TextBlock Margin="5,10,0,0" VerticalAlignment="Center" HorizontalAlignment="Center" x:Name="NumEEG"></TextBlock>
+                <TextBlock Margin="5,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Center" x:Name="NumEEG"></TextBlock>
                 <TextBlock Text="时间" Margin="5,10,0,0"></TextBlock>
-                <TextBlock Margin="5,10,0,0" VerticalAlignment="Center" HorizontalAlignment="Center" x:Name="EEG_time"></TextBlock>
+                <TextBlock Margin="5,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Center" x:Name="EEG_time"></TextBlock>
+                
+                <TextBlock Text="功率分析通道" Margin="10,8,0,0"/>
+                <ComboBox x:Name="cmbPowerChannel" Margin="10,3,10,0"
+                SelectionChanged="cmbPowerChannel_SelectionChanged"/>
+                <CheckBox x:Name="band_delta" Foreground="Brown" Content="Delta" Margin="10,3,0,0" IsChecked="True"/>
+                <CheckBox x:Name="band_theta" Foreground="Orange" Content="Theta" Margin="10,3,0,0" IsChecked="True"/>
+                <CheckBox x:Name="band_alpha" Foreground="Green" Content="Alpha" Margin="10,3,0,0" IsChecked="True"/>
+                <CheckBox x:Name="band_beta"  Foreground="Blue" Content="Beta"  Margin="10,3,0,0" IsChecked="True"/>
             </StackPanel>
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1*"/>
+                    <RowDefinition Height="1*"/>
+                </Grid.RowDefinitions>
+                <s:SciChartSurface s:ThemeManager.Theme="ExpressionLight"  x:Name="sciChartSurface"     s:VisualXcceleratorEngine.EnableImpossibleMode="False" >
+                    <!--  Create an X Axis  -->
+                    <s:SciChartSurface.XAxis>
+                        <s:NumericAxis/>
+                    </s:SciChartSurface.XAxis>
+                    <s:SciChartSurface.YAxis>
+                        <s:NumericAxis AutoRange="Always"
+                       DrawMajorGridLines="False"
+                       DrawMinorGridLines="False"
+                       DrawMajorBands="False"
+                       Visibility="Collapsed" />
+                    </s:SciChartSurface.YAxis>
 
-            <s:SciChartSurface s:ThemeManager.Theme="ExpressionLight"  x:Name="sciChartSurface"     s:VisualXcceleratorEngine.EnableImpossibleMode="False"     Grid.Column="1">
-                <!--  Create an X Axis  -->
-                <s:SciChartSurface.XAxis>
-                    <s:NumericAxis/>
-                </s:SciChartSurface.XAxis>
-                <s:SciChartSurface.YAxis>
-                    <s:NumericAxis AutoRange="Always"
-            DrawMajorGridLines="False"
-            DrawMinorGridLines="False"
-            DrawMajorBands="False"
-            Visibility="Collapsed" />
-                </s:SciChartSurface.YAxis>
-
-                <s:SciChartSurface.ChartModifier>
-                    <s:ModifierGroup>
-                        <s:RubberBandXyZoomModifier />
-                        <s:ZoomExtentsModifier />
-                    </s:ModifierGroup>
-                </s:SciChartSurface.ChartModifier>
-            </s:SciChartSurface>
+                    <s:SciChartSurface.ChartModifier>
+                        <s:ModifierGroup>
+                            <s:RubberBandXyZoomModifier />
+                            <s:ZoomExtentsModifier />
+                        </s:ModifierGroup>
+                    </s:SciChartSurface.ChartModifier>
+                </s:SciChartSurface>
+                <!-- 下：相对功率 -->
+                <s:SciChartSurface s:ThemeManager.Theme="ExpressionLight"
+                           x:Name="powerSurface"
+                           Grid.Row="1"
+                           Margin="0,0,0,0">
+                    <s:SciChartSurface.XAxis>
+                        <s:NumericAxis AxisTitle="Time (second)"/>
+                    </s:SciChartSurface.XAxis>
+                    <s:SciChartSurface.YAxis>
+                        <s:NumericAxis AxisTitle="Relative Power (%)"
+               VisibleRange="0,100"/> 
+                    </s:SciChartSurface.YAxis>
+                    <s:SciChartSurface.ChartModifier>
+                        <s:ModifierGroup>
+                            <s:RubberBandXyZoomModifier/>
+                            <s:ZoomExtentsModifier />
+                        </s:ModifierGroup>
+                    </s:SciChartSurface.ChartModifier>
+                </s:SciChartSurface>
+            </Grid>
         </Grid>
-        <!--<Grid Grid.Row="1">
-            <Sco:WpfPlot x:Name="formsPlot1"/>
-        </Grid>-->
     </Grid>
 </UserControl>
